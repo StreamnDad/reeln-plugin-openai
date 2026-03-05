@@ -1,0 +1,65 @@
+# ┌──────────────────────────────────────────────────────────────────────┐
+# │ Find-and-replace these placeholders before using this template:    │
+# │                                                                    │
+# │   plugin_name   → Python package name    (e.g., reeln_google_plugin)│
+# │   plugin-name   → PyPI package name      (e.g., reeln-plugin-google)│
+# │   PluginName    → Plugin class name      (e.g., GooglePlugin)      │
+# │   PLUGIN_PKG    → Makefile/CI variable   (same as plugin_name)     │
+# │                                                                    │
+# │ Also update: description, entry-point key, URLs, and dependencies. │
+# └──────────────────────────────────────────────────────────────────────┘
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "plugin-name"
+dynamic = ["version"]
+description = "reeln-cli plugin for ..."
+readme = "README.md"
+license = "AGPL-3.0-only"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.urls]
+Homepage = "https://streamn.dad"
+Repository = "https://github.com/StreamnDad/plugin-name"
+Changelog = "https://github.com/StreamnDad/plugin-name/blob/main/CHANGELOG.md"
+Issues = "https://github.com/StreamnDad/plugin-name/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "pytest-xdist",
+    "ruff",
+    "mypy",
+]
+
+[project.entry-points."reeln.plugins"]
+# Replace key with plugin name, value with package:ClassName
+myplugin = "plugin_name:PluginName"
+
+[tool.hatch.build.targets.wheel]
+packages = ["plugin_name"]
+
+[tool.hatch.version]
+path = "plugin_name/__init__.py"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = "reeln.*"
+ignore_missing_imports = true

@@ -1,0 +1,45 @@
+# Replace PLUGIN_PKG with your Python package name (e.g., reeln_google_plugin)
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install reeln-cli
+        run: uv pip install --system "git+https://github.com/StreamnDad/reeln-cli"
+
+      - name: Install dependencies
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Type check
+        run: mypy plugin_name/
+
+      - name: Test
+        run: python -m pytest tests/ -n auto --cov=plugin_name --cov-branch --cov-fail-under=100 -q
+
+      - name: Build
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
