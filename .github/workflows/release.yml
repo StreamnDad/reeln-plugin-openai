@@ -1,4 +1,3 @@
-# Replace PLUGIN_PKG with your Python package name (e.g., reeln_google_plugin)
 name: Release
 
 on:
@@ -33,10 +32,10 @@ jobs:
         run: ruff check .
 
       - name: Type check
-        run: mypy plugin_name/
+        run: mypy reeln_openai_plugin/
 
       - name: Test
-        run: python -m pytest tests/ -n auto --cov=plugin_name --cov-branch --cov-fail-under=100 -q
+        run: python -m pytest tests/ -n auto --cov=reeln_openai_plugin --cov-branch --cov-fail-under=100 -q
 
       - name: Build
         run: uv build

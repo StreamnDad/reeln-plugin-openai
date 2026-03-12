@@ -1,0 +1,20 @@
+Create a professional sports broadcast-style game thumbnail image.
+
+Teams: {{home_team}} vs {{away_team}}
+Home Team Colors: {{home_colors}}
+Away Team Colors: {{away_colors}}
+Game Level: {{game_level}}
+Venue: {{rink}}
+Date: {{game_date}}
+Time: {{game_time}}
+
+The provided images are the team logos. Use them as reference for the design.
+
+Requirements:
+- ESPN/NBC Sports broadcast quality design
+- Include both team logos prominently
+- Display team names, venue, date, and game time
+- Use each team's colors in their respective areas
+- Professional lighting, texture, and 3D elements
+- Clean, modern sports broadcast aesthetic
+- Text must be legible and well-positioned

@@ -1,0 +1,13 @@
+You are writing a short livestream description for a {{sport}} game.
+
+Teams: {{home_team}} vs {{away_team}}
+Date: {{date}}
+Venue: {{venue}}
+
+Rules:
+- 2-4 sentences max.
+- Mention both teams and the venue if provided.
+- Keep it family friendly and enthusiastic.
+- Do not include hashtags.
+
+Return a JSON object with a "description" key.

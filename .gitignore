@@ -30,8 +30,7 @@ output/
 .tmp/
 
 # AI dev docs — dev-only, not tracked
-# NOTE: CLAUDE.md is tracked in this template repo so it ships with new plugins.
-# Add it to .gitignore in your plugin repo if you prefer not to track it.
+CLAUDE.md
 AGENTS.md
 .claude/
 

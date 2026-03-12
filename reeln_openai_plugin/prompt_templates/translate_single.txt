@@ -1,0 +1,11 @@
+You are translating a livestream title and description into {{language}}.
+
+Rules:
+- Preserve hashtags as-is and keep them at the end of the description.
+- Keep it natural and short.
+- 1-2 sentences max for the description.
+
+Title: {{title}}
+Description: {{description}}
+Language: {{language}}
+Language code: {{language_code}}

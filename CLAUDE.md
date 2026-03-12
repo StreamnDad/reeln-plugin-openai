@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**plugin-name** is a reeln-cli plugin that provides ... integration.
+**reeln-plugin-openai** is a reeln-cli plugin that provides OpenAI-powered LLM integration for video metadata generation, intelligent zoom/crop, translation, and game summaries.
 
-- **Package:** `plugin-name` | **License:** AGPL-3.0
+- **Package:** `reeln-plugin-openai` | **License:** AGPL-3.0
 - **Python:** 3.11+ | **Plugin framework:** reeln-cli plugin system
-- Entry point: `reeln.plugins` → `myplugin = "plugin_name:PluginName"`
+- Entry point: `reeln.plugins` → `openai = "reeln_openai_plugin:OpenAIPlugin"`
 
 ## Dev Commands
 
@@ -28,29 +28,71 @@ Run a single test file or test:
 
 ## Architecture
 
-This plugin hooks into reeln-cli lifecycle events via the plugin system.
+This plugin provides OpenAI LLM capabilities to reeln-cli via hooks and the MetadataEnricher capability. It replicates the OpenAI features originally built in `streamn-dad-highlights/replay_publisher/llm.py`.
 
 ### Implemented Modules
 
 | Module | Responsibility |
 |---|---|
-| `plugin.py` | `PluginName` — plugin lifecycle, hook handlers, config schema |
-| `__init__.py` | Exports `PluginName` and `__version__` |
+| `plugin.py` | `OpenAIPlugin` — plugin lifecycle, hook handlers, config schema |
+| `__init__.py` | Exports `OpenAIPlugin` and `__version__` |
+| `client.py` | OpenAI API client — `/v1/responses` endpoint, JSON schema + image generation |
+| `prompts.py` | Prompt template engine — `{{variable}}` substitution, template loading |
+| `livestream.py` | Livestream title + description generation via OpenAI |
+| `playlist.py` | Playlist title + description generation via OpenAI |
+| `translate.py` | Translation — batch or per-language with custom commentator personas |
+| `game_image.py` | Game thumbnail generation — team logos + prompt → broadcast-style image |
 
-### Key Hook
+### Planned Modules
 
-**`ON_GAME_INIT`** — handles game initialization events.
+| Module | Responsibility |
+|---|---|
+| `frames.py` | FFmpeg frame extraction — sample N frames, scale, base64 encode |
+| `metadata.py` | Video metadata generation — title, description, hashtags from frames |
+| `zoom.py` | Intelligent zoom — smart crop (multi-frame) and replay zoom (single-frame) |
+| `cache.py` | Result caching — zoom point cache with configurable directory |
+
+### Key Features (ported from streamn-dad-highlights)
+
+1. **Video metadata** — analyze video frames via vision API to generate title/description/hashtags
+2. **Text-only metadata** — generate metadata from text prompts (game summaries, playlist descriptions)
+3. **Smart zoom** — multi-frame puck/action tracking for vertical video crops
+4. **Replay zoom** — single-frame net center detection for crop centering
+5. **Translation** — batch or per-language translation with custom commentator persona prompts
+6. **Prompt templates** — `{{variable}}` substitution with external template files
+
+### Key Hooks
+
+- **`ON_CLIP_AVAILABLE`** — enrich clip metadata with LLM-generated title/description/hashtags
+- **`ON_HIGHLIGHTS_MERGED`** — generate game summary metadata
+- **`PRE_RENDER`** — compute smart zoom / replay zoom points for render plan
+
+### Plugin Capabilities
+
+- **MetadataEnricher** — `enrich(event_data)` returns enriched metadata with LLM fields
 
 ### Shared Context Convention
 
 Plugins communicate via `HookContext.shared` (mutable dict on frozen dataclass):
 ```python
-context.shared["livestreams"]["google"] = "https://youtube.com/live/abc123"
+context.shared["metadata"]["title"] = "Amazing Goal by #12"
+context.shared["metadata"]["description"] = "..."
+context.shared["metadata"]["hashtags"] = ["#hockey", "#goal"]
+context.shared["zoom_points"] = [(0.45, 0.52), (0.48, 0.55), ...]
 ```
 
 ### External Dependencies
 
 - `reeln` — plugin hooks, capabilities, and models (sibling install)
+- OpenAI API — `/v1/responses` endpoint (direct HTTP, no SDK dependency)
+
+### OpenAI API Details
+
+- **Endpoint:** `https://api.openai.com/v1/responses`
+- **Auth:** Bearer token from file or config
+- **Models:** configurable (e.g., `gpt-5-mini` for metadata, `gpt-5.2` for spatial analysis)
+- **Response format:** JSON schema validation for structured output
+- **Vision:** base64-encoded JPEG frames sent as `input_image` content blocks
 
 ## Versioning
 
@@ -62,8 +104,8 @@ Every code change **must** bump the version following [Semantic Versioning](http
 
 Update all three locations in lockstep:
 
-1. `plugin_name/__init__.py` — `__version__`
-2. `plugin_name/plugin.py` — `version` class attribute
+1. `reeln_openai_plugin/__init__.py` — `__version__`
+2. `reeln_openai_plugin/plugin.py` — `version` class attribute
 3. `CHANGELOG.md` — new section under `[Unreleased]` with date and description
 
 ## Conventions
@@ -74,3 +116,5 @@ Update all three locations in lockstep:
 - 100% line + branch coverage — no exceptions
 - Keep a Changelog format in CHANGELOG.md
 - Tests use `tmp_path` for all file I/O and mock external API clients
+- Mock OpenAI HTTP responses — never make real API calls in tests
+- Use `httpx` or `urllib.request` for HTTP (no `openai` SDK dependency)

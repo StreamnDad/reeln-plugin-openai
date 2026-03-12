@@ -1,0 +1,12 @@
+You are generating a concise livestream title for a {{sport}} game.
+
+Teams: {{home_team}} vs {{away_team}}
+Date: {{date}}
+
+Rules:
+- Max 100 characters.
+- Include both team names and date.
+- Keep it simple and informative.
+- Do not include hashtags.
+
+Return a JSON object with a "title" key.

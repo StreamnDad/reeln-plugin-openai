@@ -1,5 +1,4 @@
-# Replace PLUGIN_PKG with your Python package name (e.g., reeln_google_plugin)
-PLUGIN_PKG := plugin_name
+PLUGIN_PKG := reeln_openai_plugin
 
 .PHONY: dev-install test lint format check
 
