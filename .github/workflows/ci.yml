@@ -23,17 +23,18 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
-      - name: Install reeln-cli
-        run: uv pip install --system "git+https://github.com/StreamnDad/reeln-cli"
-
-      - name: Install dependencies
-        run: uv pip install --system -e ".[dev]"
+      - name: Create venv and install
+        run: |
+          uv venv .venv --python ${{ matrix.python-version }}
+          source .venv/bin/activate
+          uv pip install "git+https://github.com/StreamnDad/reeln-cli"
+          uv pip install -e ".[dev]"
 
       - name: Lint
-        run: ruff check .
+        run: .venv/bin/ruff check .
 
       - name: Type check
-        run: mypy reeln_openai_plugin/
+        run: .venv/bin/mypy reeln_openai_plugin/
 
       - name: Test
-        run: python -m pytest tests/ -n auto --cov=reeln_openai_plugin --cov-branch --cov-fail-under=100 -q
+        run: .venv/bin/python -m pytest tests/ -n auto --cov=reeln_openai_plugin --cov-branch --cov-fail-under=100 -q
