@@ -31,7 +31,7 @@ class OpenAIPlugin:
     """
 
     name: str = "openai"
-    version: str = "0.4.0"
+    version: str = "0.4.2"
     api_version: int = 1
 
     config_schema: PluginConfigSchema = PluginConfigSchema(
@@ -155,16 +155,43 @@ class OpenAIPlugin:
             log.warning("%s plugin: no game_info in context, skipping", self.name)
             return
 
+        home_profile = context.data.get("home_profile")
+        away_profile = context.data.get("away_profile")
+        user_thumbnail = getattr(game_info, "thumbnail", "")
+
         try:
             client = self._get_client()
         except OpenAIError as exc:
             log.warning("%s plugin: client setup failed: %s", self.name, exc)
             return
 
-        home_profile = context.data.get("home_profile")
-        away_profile = context.data.get("away_profile")
+        # Generate livestream metadata (description is passed as LLM context)
+        self._generate_livestream_metadata(client, game_info, context, home_profile, away_profile)
 
-        # Generate livestream metadata
+        # Generate playlist metadata (only if livestream metadata was generated)
+        livestream_meta = context.shared.get("livestream_metadata")
+        if self._config.get("playlist_enabled", False) and livestream_meta:
+            self._generate_playlist_metadata(client, game_info, context, livestream_meta["title"])
+
+        # Generate game image (skip if user provided a thumbnail)
+        if self._config.get("game_image_enabled", False):
+            if user_thumbnail:
+                log.info(
+                    "%s plugin: user-provided thumbnail found, skipping image generation",
+                    self.name,
+                )
+            else:
+                self._maybe_generate_game_image(client, game_info, context, home_profile, away_profile)
+
+    def _generate_livestream_metadata(
+        self,
+        client: OpenAIClient,
+        game_info: object,
+        context: HookContext,
+        home_profile: object | None,
+        away_profile: object | None,
+    ) -> None:
+        """Generate livestream metadata via LLM and optionally translate."""
         try:
             metadata = generate_livestream_metadata(
                 client, self._prompt_registry, game_info,
@@ -180,7 +207,6 @@ class OpenAIPlugin:
             "description": metadata.description,
         }
 
-        # Translate if enabled
         if self._config.get("translate_enabled", False) and self._translate_languages:
             try:
                 translations = translate_metadata(
@@ -202,48 +228,50 @@ class OpenAIPlugin:
         context.shared["livestream_metadata"] = result
         log.info("%s plugin: generated livestream metadata: %s", self.name, result["title"])
 
-        # Generate playlist metadata
-        if self._config.get("playlist_enabled", False):
+    def _generate_playlist_metadata(
+        self,
+        client: OpenAIClient,
+        game_info: object,
+        context: HookContext,
+        livestream_title: str,
+    ) -> None:
+        """Generate playlist metadata via LLM and optionally translate."""
+        try:
+            playlist = generate_playlist_metadata(
+                client,
+                self._prompt_registry,
+                game_info,
+                livestream_title=livestream_title,
+            )
+        except OpenAIError as exc:
+            log.warning("%s plugin: playlist generation failed: %s", self.name, exc)
+            return
+
+        playlist_result: dict[str, Any] = {
+            "title": playlist.title,
+            "description": playlist.description,
+        }
+
+        if self._config.get("translate_enabled", False) and self._translate_languages:
             try:
-                playlist = generate_playlist_metadata(
+                playlist_translations = translate_metadata(
                     client,
                     self._prompt_registry,
-                    game_info,
-                    livestream_title=metadata.title,
+                    title=playlist.title,
+                    description=playlist.description,
+                    languages=self._translate_languages,
+                    per_language_prompts=self._per_language_prompts or None,
                 )
+                playlist_result["translations"] = {
+                    code: {"title": t.title, "description": t.description}
+                    for code, t in playlist_translations.items()
+                }
             except OpenAIError as exc:
-                log.warning("%s plugin: playlist generation failed: %s", self.name, exc)
-                return
+                log.warning("%s plugin: playlist translation failed: %s", self.name, exc)
+                playlist_result["translations"] = {}
 
-            playlist_result: dict[str, Any] = {
-                "title": playlist.title,
-                "description": playlist.description,
-            }
-
-            if self._config.get("translate_enabled", False) and self._translate_languages:
-                try:
-                    playlist_translations = translate_metadata(
-                        client,
-                        self._prompt_registry,
-                        title=playlist.title,
-                        description=playlist.description,
-                        languages=self._translate_languages,
-                        per_language_prompts=self._per_language_prompts or None,
-                    )
-                    playlist_result["translations"] = {
-                        code: {"title": t.title, "description": t.description}
-                        for code, t in playlist_translations.items()
-                    }
-                except OpenAIError as exc:
-                    log.warning("%s plugin: playlist translation failed: %s", self.name, exc)
-                    playlist_result["translations"] = {}
-
-            context.shared["playlist_metadata"] = playlist_result
-            log.info("%s plugin: generated playlist metadata: %s", self.name, playlist_result["title"])
-
-        # Generate game image
-        if self._config.get("game_image_enabled", False):
-            self._maybe_generate_game_image(client, game_info, context, home_profile, away_profile)
+        context.shared["playlist_metadata"] = playlist_result
+        log.info("%s plugin: generated playlist metadata: %s", self.name, playlist_result["title"])
 
     def _maybe_generate_game_image(
         self,
