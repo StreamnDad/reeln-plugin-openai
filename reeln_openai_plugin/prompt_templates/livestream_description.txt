@@ -3,8 +3,10 @@ You are writing a short livestream description for a {{sport}} game.
 Teams: {{home_team}} vs {{away_team}}
 Date: {{date}}
 Venue: {{venue}}
+Context: {{description}}
 
 Rules:
+- Incorporate any provided context (e.g. tournament round, rivalry, special event) naturally.
 - 2-4 sentences max.
 - Mention both teams and the venue if provided.
 - Keep it family friendly and enthusiastic.

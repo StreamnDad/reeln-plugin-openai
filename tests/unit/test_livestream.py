@@ -81,6 +81,16 @@ class TestBuildPromptVariables:
         assert "home_profile" not in v
         assert "away_profile" not in v
 
+    def test_with_description(self) -> None:
+        info = FakeGameInfo(description="Semifinals tournament game")
+        v = build_prompt_variables(info)
+        assert v["description"] == "Semifinals tournament game"
+
+    def test_empty_description(self) -> None:
+        info = FakeGameInfo()
+        v = build_prompt_variables(info)
+        assert v["description"] == ""
+
     def test_missing_attributes(self) -> None:
         """Duck-typed object without all attributes still works."""
 

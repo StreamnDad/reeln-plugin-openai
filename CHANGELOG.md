@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.2] - 2026-03-15
+
+### Added
+
+- User-provided broadcast description (`game_info.description`) is now passed as `{{description}}` context to livestream prompt templates, allowing the LLM to incorporate tournament round, rivalry, or event details
+- `Context: {{description}}` added to `livestream_title` and `livestream_description` prompt templates
+
+### Changed
+
+- Skip game image generation when user provides a thumbnail path during `game init`
+- Extract `_generate_livestream_metadata()` and `_generate_playlist_metadata()` helper methods for reduced nesting
+
 ## [0.4.0] - 2026-03-11
 
 ### Added

@@ -26,7 +26,7 @@ class TestPluginAttributes:
 
     def test_version(self) -> None:
         plugin = OpenAIPlugin()
-        assert plugin.version == "0.4.0"
+        assert plugin.version == "0.4.2"
 
     def test_api_version(self) -> None:
         plugin = OpenAIPlugin()
@@ -260,6 +260,25 @@ class TestOnGameInit:
         assert context.shared["livestream_metadata"]["title"] == "T"
         assert context.shared["livestream_metadata"]["translations"] == {}
         assert "translation failed" in caplog.text
+
+    @patch("reeln_openai_plugin.plugin.generate_livestream_metadata")
+    def test_user_description_passed_as_context(
+        self,
+        mock_gen: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        """When game_info.description is set, it is passed through to LLM as context."""
+        from reeln_openai_plugin.livestream import LivestreamMetadata
+
+        mock_gen.return_value = LivestreamMetadata(title="Semis!", description="Big game!")
+        plugin = OpenAIPlugin(plugin_config)
+        game_info = FakeGameInfo(description="Semifinals tournament game")
+        context = HookContext(hook=Hook.ON_GAME_INIT, data={"game_info": game_info})
+
+        plugin.on_game_init(context)
+
+        mock_gen.assert_called_once()
+        assert context.shared["livestream_metadata"]["title"] == "Semis!"
 
     @patch("reeln_openai_plugin.plugin.generate_livestream_metadata")
     def test_translate_disabled_no_translations(
@@ -536,6 +555,43 @@ class TestGetClient:
 
 
 class TestOnGameInitGameImage:
+    @patch("reeln_openai_plugin.plugin.generate_game_image")
+    @patch("reeln_openai_plugin.plugin.generate_livestream_metadata")
+    def test_user_provided_thumbnail_skips_image_generation(
+        self,
+        mock_livestream: MagicMock,
+        mock_game_image: MagicMock,
+        plugin_config: dict[str, Any],
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """When game_info.thumbnail is set, skip LLM image generation."""
+        from reeln_openai_plugin.livestream import LivestreamMetadata
+
+        mock_livestream.return_value = LivestreamMetadata(title="T", description="D")
+
+        home_info = FakeTeamInfo(name="A", logo_path=tmp_path / "h.png")
+        away_info = FakeTeamInfo(name="B", logo_path=tmp_path / "a.png")
+
+        config = {
+            **plugin_config,
+            "game_image_enabled": True,
+            "game_image_output_dir": str(tmp_path),
+        }
+        plugin = OpenAIPlugin(config)
+        game_info = FakeGameInfo(thumbnail="/path/to/user_thumb.png")
+        context = HookContext(
+            hook=Hook.ON_GAME_INIT,
+            data={"game_info": game_info, "home_profile": home_info, "away_profile": away_info},
+        )
+
+        with caplog.at_level(logging.INFO):
+            plugin.on_game_init(context)
+
+        mock_game_image.assert_not_called()
+        assert "game_image" not in context.shared
+        assert "user-provided thumbnail" in caplog.text
+
     @patch("reeln_openai_plugin.plugin.generate_livestream_metadata")
     def test_game_image_disabled_skips(
         self,
