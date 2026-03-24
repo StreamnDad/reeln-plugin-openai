@@ -12,7 +12,7 @@ from reeln.plugins.hooks import Hook, HookContext
 from reeln.plugins.registry import HookRegistry
 
 from reeln_openai_plugin.plugin import OpenAIPlugin
-from tests.conftest import FakeGameInfo, FakeTeamInfo
+from tests.conftest import FakeExtractedFrames, FakeGameInfo, FakeTeamInfo
 
 # ------------------------------------------------------------------
 # Attributes
@@ -26,7 +26,7 @@ class TestPluginAttributes:
 
     def test_version(self) -> None:
         plugin = OpenAIPlugin()
-        assert plugin.version == "0.4.2"
+        assert plugin.version == "0.7.0"
 
     def test_api_version(self) -> None:
         plugin = OpenAIPlugin()
@@ -57,6 +57,20 @@ class TestPluginConfigSchema:
         assert "game_image_renderer_model" in names
         assert "game_image_output_dir" in names
 
+    def test_has_short_metadata_field(self) -> None:
+        names = [f.name for f in OpenAIPlugin.config_schema.fields]
+        assert "short_metadata_enabled" in names
+
+    def test_has_smart_zoom_fields(self) -> None:
+        names = [f.name for f in OpenAIPlugin.config_schema.fields]
+        assert "smart_zoom_enabled" in names
+        assert "smart_zoom_model" in names
+
+    def test_has_frame_description_fields(self) -> None:
+        names = [f.name for f in OpenAIPlugin.config_schema.fields]
+        assert "frame_description_enabled" in names
+        assert "frame_description_model" in names
+
     def test_defaults(self) -> None:
         defaults = OpenAIPlugin.config_schema.defaults_dict()
         assert defaults["enabled"] is False
@@ -67,6 +81,11 @@ class TestPluginConfigSchema:
         assert defaults["game_image_model"] == "gpt-5.2"
         assert defaults["game_image_renderer_model"] == "gpt-image-1.5"
         assert defaults["game_image_output_dir"] == ""
+        assert defaults["short_metadata_enabled"] is False
+        assert defaults["smart_zoom_enabled"] is False
+        assert defaults["smart_zoom_model"] == "gpt-4.1"
+        assert defaults["frame_description_enabled"] is False
+        assert defaults["frame_description_model"] == "gpt-4.1"
 
 
 # ------------------------------------------------------------------
@@ -122,6 +141,18 @@ class TestPluginRegister:
         plugin.register(registry)
         assert registry.has_handlers(Hook.ON_GAME_INIT)
 
+    def test_registers_post_render(self) -> None:
+        plugin = OpenAIPlugin()
+        registry = HookRegistry()
+        plugin.register(registry)
+        assert registry.has_handlers(Hook.POST_RENDER)
+
+    def test_registers_on_frames_extracted(self) -> None:
+        plugin = OpenAIPlugin()
+        registry = HookRegistry()
+        plugin.register(registry)
+        assert registry.has_handlers(Hook.ON_FRAMES_EXTRACTED)
+
     def test_does_not_register_other_hooks(self) -> None:
         plugin = OpenAIPlugin()
         registry = HookRegistry()
@@ -152,7 +183,9 @@ class TestOnGameInit:
 
     @patch.dict("os.environ", {}, clear=True)
     def test_client_failure_logs_warning(
-        self, caplog: pytest.LogCaptureFixture, tmp_path: Path,
+        self,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
     ) -> None:
         """Missing API key file and no env var causes client setup failure."""
         config: dict[str, Any] = {"enabled": True, "api_key_file": str(tmp_path / "missing.txt")}
@@ -279,6 +312,23 @@ class TestOnGameInit:
 
         mock_gen.assert_called_once()
         assert context.shared["livestream_metadata"]["title"] == "Semis!"
+
+    @patch("reeln_openai_plugin.plugin.generate_livestream_metadata")
+    def test_caches_game_info(
+        self,
+        mock_gen: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        from reeln_openai_plugin.livestream import LivestreamMetadata
+
+        mock_gen.return_value = LivestreamMetadata(title="T", description="D")
+        plugin = OpenAIPlugin(plugin_config)
+        game_info = FakeGameInfo(home_team="Storm")
+        context = HookContext(hook=Hook.ON_GAME_INIT, data={"game_info": game_info})
+
+        plugin.on_game_init(context)
+
+        assert plugin._game_info is game_info
 
     @patch("reeln_openai_plugin.plugin.generate_livestream_metadata")
     def test_translate_disabled_no_translations(
@@ -477,6 +527,246 @@ class TestOnGameInitPlaylist:
 
 
 # ------------------------------------------------------------------
+# on_post_render — short metadata
+# ------------------------------------------------------------------
+
+
+class TestOnPostRender:
+    def test_disabled_skips(self, plugin_config: dict[str, Any]) -> None:
+        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": False})
+        plugin._game_info = FakeGameInfo()
+        plan = MagicMock()
+        plan.filter_complex = "filter"
+        context = HookContext(hook=Hook.POST_RENDER, data={"plan": plan, "result": MagicMock()})
+
+        plugin.on_post_render(context)
+
+        assert "uploads" not in context.shared
+
+    def test_no_game_info_skips(self, plugin_config: dict[str, Any]) -> None:
+        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        # _game_info not set (no game init happened)
+        plan = MagicMock()
+        plan.filter_complex = "filter"
+        context = HookContext(hook=Hook.POST_RENDER, data={"plan": plan, "result": MagicMock()})
+
+        plugin.on_post_render(context)
+
+        assert "uploads" not in context.shared
+
+    def test_no_plan_skips(self, plugin_config: dict[str, Any]) -> None:
+        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        plugin._game_info = FakeGameInfo()
+        context = HookContext(hook=Hook.POST_RENDER, data={"result": MagicMock()})
+
+        plugin.on_post_render(context)
+
+        assert "uploads" not in context.shared
+
+    def test_no_filter_complex_skips(self, plugin_config: dict[str, Any]) -> None:
+        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        plugin._game_info = FakeGameInfo()
+        plan = MagicMock()
+        plan.filter_complex = None
+        context = HookContext(hook=Hook.POST_RENDER, data={"plan": plan, "result": MagicMock()})
+
+        plugin.on_post_render(context)
+
+        assert "uploads" not in context.shared
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_client_failure_warns(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
+    ) -> None:
+        config: dict[str, Any] = {
+            "short_metadata_enabled": True,
+            "api_key_file": str(tmp_path / "missing.txt"),
+        }
+        plugin = OpenAIPlugin(config)
+        plugin._game_info = FakeGameInfo()
+        plan = MagicMock()
+        plan.filter_complex = "filter"
+        context = HookContext(hook=Hook.POST_RENDER, data={"plan": plan, "result": MagicMock()})
+
+        with caplog.at_level(logging.WARNING):
+            plugin.on_post_render(context)
+
+        assert "client setup failed" in caplog.text
+        assert "uploads" not in context.shared
+
+    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    def test_success(
+        self,
+        mock_gen: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        from reeln_openai_plugin.short_metadata import ShortMetadata
+
+        mock_gen.return_value = ShortMetadata(title="Amazing Goal!", description="Great play!")
+        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        plugin._game_info = FakeGameInfo()
+
+        plan = MagicMock()
+        plan.filter_complex = "filter"
+        plan.output = MagicMock()
+        plan.output.stem = "goal_001"
+        context = HookContext(hook=Hook.POST_RENDER, data={"plan": plan, "result": MagicMock()})
+
+        plugin.on_post_render(context)
+
+        assert context.shared["uploads"]["google"]["short_title"] == "Amazing Goal!"
+        assert context.shared["uploads"]["google"]["short_description"] == "Great play!"
+        mock_gen.assert_called_once()
+
+    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    def test_passes_clip_name(
+        self,
+        mock_gen: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        from reeln_openai_plugin.short_metadata import ShortMetadata
+
+        mock_gen.return_value = ShortMetadata(title="T", description="D")
+        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        plugin._game_info = FakeGameInfo()
+
+        plan = MagicMock()
+        plan.filter_complex = "filter"
+        plan.output = MagicMock()
+        plan.output.stem = "clip_highlight"
+        context = HookContext(hook=Hook.POST_RENDER, data={"plan": plan, "result": MagicMock()})
+
+        plugin.on_post_render(context)
+
+        call_kwargs = mock_gen.call_args[1]
+        assert call_kwargs["clip_name"] == "clip_highlight"
+
+    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    def test_generation_failure_non_fatal(
+        self,
+        mock_gen: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        from reeln_openai_plugin.client import OpenAIError
+
+        mock_gen.side_effect = OpenAIError("API down")
+        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        plugin._game_info = FakeGameInfo()
+
+        plan = MagicMock()
+        plan.filter_complex = "filter"
+        context = HookContext(hook=Hook.POST_RENDER, data={"plan": plan, "result": MagicMock()})
+
+        with caplog.at_level(logging.WARNING):
+            plugin.on_post_render(context)
+
+        assert "short metadata generation failed" in caplog.text
+        assert "uploads" not in context.shared
+
+    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    def test_preserves_existing_shared(
+        self,
+        mock_gen: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        """When shared context already has uploads data, short metadata is merged in."""
+        from reeln_openai_plugin.short_metadata import ShortMetadata
+
+        mock_gen.return_value = ShortMetadata(title="T", description="D")
+        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        plugin._game_info = FakeGameInfo()
+
+        plan = MagicMock()
+        plan.filter_complex = "filter"
+        plan.output = MagicMock()
+        plan.output.stem = "clip"
+        context = HookContext(
+            hook=Hook.POST_RENDER,
+            data={"plan": plan, "result": MagicMock()},
+            shared={"uploads": {"google": {"existing": "data"}}},
+        )
+
+        plugin.on_post_render(context)
+
+        google = context.shared["uploads"]["google"]
+        assert google["existing"] == "data"
+        assert google["short_title"] == "T"
+        assert google["short_description"] == "D"
+
+    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    def test_uses_game_info_from_hook_data(
+        self,
+        mock_gen: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        """When _game_info is None, fall back to context.data['game_info']."""
+        from reeln_openai_plugin.short_metadata import ShortMetadata
+
+        mock_gen.return_value = ShortMetadata(title="From Hook", description="D")
+        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        assert plugin._game_info is None
+
+        game_info = FakeGameInfo()
+        plan = MagicMock()
+        plan.filter_complex = "filter"
+        plan.output = MagicMock()
+        plan.output.stem = "clip"
+        context = HookContext(
+            hook=Hook.POST_RENDER,
+            data={"plan": plan, "result": MagicMock(), "game_info": game_info},
+        )
+
+        plugin.on_post_render(context)
+
+        assert context.shared["uploads"]["google"]["short_title"] == "From Hook"
+        # Verify the game_info was passed to generate_short_metadata
+        call_args = mock_gen.call_args
+        assert call_args[0][2] is game_info
+
+    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    def test_passes_player_and_event_context(
+        self,
+        mock_gen: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        """Player, assists, event_type, and level are forwarded from hook data."""
+        from reeln_openai_plugin.short_metadata import ShortMetadata
+        from tests.conftest import FakeGameEvent
+
+        mock_gen.return_value = ShortMetadata(title="T", description="D")
+        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+
+        game_info = FakeGameInfo(level="2016")
+        game_event = FakeGameEvent(event_type="goal")
+        plan = MagicMock()
+        plan.filter_complex = "filter"
+        plan.output = MagicMock()
+        plan.output.stem = "clip"
+        context = HookContext(
+            hook=Hook.POST_RENDER,
+            data={
+                "plan": plan,
+                "result": MagicMock(),
+                "game_info": game_info,
+                "game_event": game_event,
+                "player": "#48 Benjamin Remitz",
+                "assists": "#7 John Smith",
+            },
+        )
+
+        plugin.on_post_render(context)
+
+        call_kwargs = mock_gen.call_args[1]
+        assert call_kwargs["player"] == "#48 Benjamin Remitz"
+        assert call_kwargs["assists"] == "#7 John Smith"
+        assert call_kwargs["event_type"] == "goal"
+        assert call_kwargs["level"] == "2016"
+
+
+# ------------------------------------------------------------------
 # _get_client
 # ------------------------------------------------------------------
 
@@ -498,8 +788,12 @@ class TestGetClient:
         from reeln_openai_plugin.client import OpenAIError
 
         plugin = OpenAIPlugin({"enabled": True})
-        with patch.dict("os.environ", {}, clear=True), pytest.raises(
-            OpenAIError, match="No API key",
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            pytest.raises(
+                OpenAIError,
+                match="No API key",
+            ),
         ):
             plugin._get_client()
 
@@ -516,12 +810,17 @@ class TestGetClient:
         assert client._api_key == "sk-test-key-12345"
 
     def test_missing_file_falls_back_to_env(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         config: dict[str, Any] = {"api_key_file": str(tmp_path / "missing.txt")}
         plugin = OpenAIPlugin(config)
-        with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-fallback"}), caplog.at_level(
-            logging.WARNING,
+        with (
+            patch.dict("os.environ", {"OPENAI_API_KEY": "sk-fallback"}),
+            caplog.at_level(
+                logging.WARNING,
+            ),
         ):
             client = plugin._get_client()
         assert client._api_key == "sk-fallback"
@@ -532,8 +831,12 @@ class TestGetClient:
 
         config: dict[str, Any] = {"api_key_file": str(tmp_path / "missing.txt")}
         plugin = OpenAIPlugin(config)
-        with patch.dict("os.environ", {}, clear=True), pytest.raises(
-            OpenAIError, match="No API key",
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            pytest.raises(
+                OpenAIError,
+                match="No API key",
+            ),
         ):
             plugin._get_client()
 
@@ -808,6 +1111,480 @@ class TestOnGameInitGameImage:
 
         assert "game_image" not in context.shared
         assert "game_image_output_dir not configured" in caplog.text
+
+
+# ------------------------------------------------------------------
+# on_frames_extracted — smart zoom
+# ------------------------------------------------------------------
+
+
+class TestOnFramesExtracted:
+    def _make_frames(self, tmp_path: Path, count: int = 3) -> FakeExtractedFrames:
+        paths = []
+        timestamps = []
+        for i in range(count):
+            p = tmp_path / f"frame_{i:04d}.png"
+            p.write_bytes(b"\x89PNG")
+            paths.append(p)
+            timestamps.append(float(i * 2))
+        return FakeExtractedFrames(
+            frame_paths=tuple(paths),
+            timestamps=tuple(timestamps),
+        )
+
+    def test_disabled_skips(self, plugin_config: dict[str, Any]) -> None:
+        plugin = OpenAIPlugin({**plugin_config, "smart_zoom_enabled": False})
+        frames = FakeExtractedFrames()
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED,
+            data={"frames": frames},
+        )
+        plugin.on_frames_extracted(context)
+        assert "smart_zoom" not in context.shared
+
+    def test_no_frames_data_warns(
+        self,
+        plugin_config: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        plugin = OpenAIPlugin({**plugin_config, "smart_zoom_enabled": True})
+        context = HookContext(hook=Hook.ON_FRAMES_EXTRACTED, data={})
+        with caplog.at_level(logging.WARNING):
+            plugin.on_frames_extracted(context)
+        assert "no frames in context" in caplog.text
+        assert "smart_zoom" not in context.shared
+
+    def test_empty_frame_list_warns(
+        self,
+        plugin_config: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        plugin = OpenAIPlugin({**plugin_config, "smart_zoom_enabled": True})
+        frames = FakeExtractedFrames(frame_paths=(), timestamps=())
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED,
+            data={"frames": frames},
+        )
+        with caplog.at_level(logging.WARNING):
+            plugin.on_frames_extracted(context)
+        assert "empty frame list" in caplog.text
+        assert "smart_zoom" not in context.shared
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_client_failure_warns(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
+    ) -> None:
+        config: dict[str, Any] = {
+            "smart_zoom_enabled": True,
+            "api_key_file": str(tmp_path / "missing.txt"),
+        }
+        plugin = OpenAIPlugin(config)
+        frames = self._make_frames(tmp_path, count=1)
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED,
+            data={"frames": frames},
+        )
+        with caplog.at_level(logging.WARNING):
+            plugin.on_frames_extracted(context)
+        assert "client setup failed" in caplog.text
+        assert "smart_zoom" not in context.shared
+
+    @patch("reeln_openai_plugin.plugin.analyze_frame_for_zoom")
+    def test_single_frame_success(
+        self,
+        mock_analyze: MagicMock,
+        plugin_config: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        mock_analyze.return_value = (0.3, 0.7)
+        plugin = OpenAIPlugin({**plugin_config, "smart_zoom_enabled": True})
+        frames = self._make_frames(tmp_path, count=1)
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED,
+            data={"frames": frames},
+        )
+
+        plugin.on_frames_extracted(context)
+
+        zoom_path = context.shared["smart_zoom"]["zoom_path"]
+        assert len(zoom_path.points) == 1
+        assert zoom_path.points[0].center_x == 0.3
+        assert zoom_path.points[0].center_y == 0.7
+        assert zoom_path.points[0].timestamp == 0.0
+        assert zoom_path.source_width == 1920
+        assert zoom_path.source_height == 1080
+
+    @patch("reeln_openai_plugin.plugin.analyze_frame_for_zoom")
+    def test_multi_frame_success(
+        self,
+        mock_analyze: MagicMock,
+        plugin_config: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        mock_analyze.side_effect = [(0.3, 0.4), (0.5, 0.6), (0.7, 0.8)]
+        plugin = OpenAIPlugin({**plugin_config, "smart_zoom_enabled": True})
+        frames = self._make_frames(tmp_path, count=3)
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED,
+            data={"frames": frames},
+        )
+
+        plugin.on_frames_extracted(context)
+
+        zoom_path = context.shared["smart_zoom"]["zoom_path"]
+        assert len(zoom_path.points) == 3
+        assert zoom_path.points[0].center_x == 0.3
+        assert zoom_path.points[1].center_x == 0.5
+        assert zoom_path.points[2].center_x == 0.7
+        assert zoom_path.duration == 10.0
+
+    @patch("reeln_openai_plugin.plugin.analyze_frame_for_zoom")
+    def test_per_frame_fallback(
+        self,
+        mock_analyze: MagicMock,
+        plugin_config: dict[str, Any],
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """One frame fails, others succeed — fallback on failed frame."""
+        from reeln_openai_plugin.client import OpenAIError
+
+        mock_analyze.side_effect = [
+            (0.3, 0.4),
+            OpenAIError("API down"),
+            (0.7, 0.8),
+        ]
+        plugin = OpenAIPlugin({**plugin_config, "smart_zoom_enabled": True})
+        frames = self._make_frames(tmp_path, count=3)
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED,
+            data={"frames": frames},
+        )
+
+        with caplog.at_level(logging.WARNING):
+            plugin.on_frames_extracted(context)
+
+        zoom_path = context.shared["smart_zoom"]["zoom_path"]
+        assert len(zoom_path.points) == 3
+        # Failed frame gets fallback center
+        assert zoom_path.points[1].center_x == 0.5
+        assert zoom_path.points[1].center_y == 0.5
+        assert "using fallback" in caplog.text
+
+    @patch("reeln_openai_plugin.plugin.analyze_frame_for_zoom")
+    def test_all_frames_fail_no_write(
+        self,
+        mock_analyze: MagicMock,
+        plugin_config: dict[str, Any],
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from reeln_openai_plugin.client import OpenAIError
+
+        mock_analyze.side_effect = OpenAIError("API down")
+        plugin = OpenAIPlugin({**plugin_config, "smart_zoom_enabled": True})
+        frames = self._make_frames(tmp_path, count=2)
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED,
+            data={"frames": frames},
+        )
+
+        with caplog.at_level(logging.WARNING):
+            plugin.on_frames_extracted(context)
+
+        assert "smart_zoom" not in context.shared
+        assert "all 2 frame analyses failed" in caplog.text
+
+    @patch("reeln_openai_plugin.plugin.analyze_frame_for_zoom")
+    def test_model_override(
+        self,
+        mock_analyze: MagicMock,
+        plugin_config: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        mock_analyze.return_value = (0.5, 0.5)
+        config = {**plugin_config, "smart_zoom_enabled": True, "smart_zoom_model": "gpt-5"}
+        plugin = OpenAIPlugin(config)
+        frames = self._make_frames(tmp_path, count=1)
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED,
+            data={"frames": frames},
+        )
+
+        plugin.on_frames_extracted(context)
+
+        call_kwargs = mock_analyze.call_args[1]
+        assert call_kwargs["model"] == "gpt-5"
+
+
+# ------------------------------------------------------------------
+# on_frames_extracted — frame description
+# ------------------------------------------------------------------
+
+
+class TestOnFramesExtractedFrameDescription:
+    def _make_frames(self, tmp_path: Path, count: int = 3) -> FakeExtractedFrames:
+        paths = []
+        timestamps = []
+        for i in range(count):
+            p = tmp_path / f"frame_{i:04d}.png"
+            p.write_bytes(b"\x89PNG")
+            paths.append(p)
+            timestamps.append(float(i * 2))
+        return FakeExtractedFrames(
+            frame_paths=tuple(paths),
+            timestamps=tuple(timestamps),
+        )
+
+    def test_disabled_skips(self, plugin_config: dict[str, Any]) -> None:
+        plugin = OpenAIPlugin({**plugin_config, "frame_description_enabled": False})
+        frames = FakeExtractedFrames()
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED,
+            data={"frames": frames},
+        )
+        plugin.on_frames_extracted(context)
+        assert "frame_descriptions" not in context.shared
+
+    @patch("reeln_openai_plugin.plugin.describe_frames")
+    def test_success_writes_shared_and_caches(
+        self,
+        mock_describe: MagicMock,
+        plugin_config: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        from reeln_openai_plugin.frames import FrameDescriptions
+
+        mock_describe.return_value = FrameDescriptions(
+            descriptions=("Player shoots", "Goal scored"),
+            summary="Quick wrist shot goal",
+        )
+        config = {**plugin_config, "frame_description_enabled": True}
+        plugin = OpenAIPlugin(config)
+        frames = self._make_frames(tmp_path, count=2)
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED,
+            data={"frames": frames},
+        )
+
+        plugin.on_frames_extracted(context)
+
+        # Written to shared context
+        fd = context.shared["frame_descriptions"]
+        assert fd["descriptions"] == ["Player shoots", "Goal scored"]
+        assert fd["summary"] == "Quick wrist shot goal"
+        # Cached on instance
+        assert plugin._frame_descriptions is not None
+        assert plugin._frame_descriptions.summary == "Quick wrist shot goal"
+
+    @patch("reeln_openai_plugin.plugin.describe_frames")
+    def test_failure_non_fatal(
+        self,
+        mock_describe: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        plugin_config: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        from reeln_openai_plugin.client import OpenAIError
+
+        mock_describe.side_effect = OpenAIError("Vision API down")
+        config = {**plugin_config, "frame_description_enabled": True}
+        plugin = OpenAIPlugin(config)
+        frames = self._make_frames(tmp_path, count=1)
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED,
+            data={"frames": frames},
+        )
+
+        with caplog.at_level(logging.WARNING):
+            plugin.on_frames_extracted(context)
+
+        assert "frame description failed" in caplog.text
+        assert "frame_descriptions" not in context.shared
+        assert plugin._frame_descriptions is None
+
+    @patch("reeln_openai_plugin.plugin.analyze_frame_for_zoom")
+    @patch("reeln_openai_plugin.plugin.describe_frames")
+    def test_failure_non_fatal_zoom_still_works(
+        self,
+        mock_describe: MagicMock,
+        mock_analyze: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        plugin_config: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        from reeln_openai_plugin.client import OpenAIError
+
+        mock_analyze.return_value = (0.3, 0.7)
+        mock_describe.side_effect = OpenAIError("Vision API down")
+        config = {
+            **plugin_config,
+            "smart_zoom_enabled": True,
+            "frame_description_enabled": True,
+        }
+        plugin = OpenAIPlugin(config)
+        frames = self._make_frames(tmp_path, count=1)
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED,
+            data={"frames": frames},
+        )
+
+        with caplog.at_level(logging.WARNING):
+            plugin.on_frames_extracted(context)
+
+        # Zoom still works
+        assert "smart_zoom" in context.shared
+        zoom_path = context.shared["smart_zoom"]["zoom_path"]
+        assert zoom_path.points[0].center_x == 0.3
+        # Frame description failed gracefully
+        assert "frame_descriptions" not in context.shared
+        assert "frame description failed" in caplog.text
+
+    @patch("reeln_openai_plugin.plugin.describe_frames")
+    def test_model_override(
+        self,
+        mock_describe: MagicMock,
+        plugin_config: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        from reeln_openai_plugin.frames import FrameDescriptions
+
+        mock_describe.return_value = FrameDescriptions(
+            descriptions=("d",), summary="s",
+        )
+        config = {
+            **plugin_config,
+            "frame_description_enabled": True,
+            "frame_description_model": "gpt-5",
+        }
+        plugin = OpenAIPlugin(config)
+        frames = self._make_frames(tmp_path, count=1)
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED,
+            data={"frames": frames},
+        )
+
+        plugin.on_frames_extracted(context)
+
+        call_kwargs = mock_describe.call_args[1]
+        assert call_kwargs["model"] == "gpt-5"
+
+    @patch("reeln_openai_plugin.plugin.describe_frames")
+    def test_only_frame_description_enabled(
+        self,
+        mock_describe: MagicMock,
+        plugin_config: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        """Frame description works even when smart zoom is disabled."""
+        from reeln_openai_plugin.frames import FrameDescriptions
+
+        mock_describe.return_value = FrameDescriptions(
+            descriptions=("action",), summary="play summary",
+        )
+        config = {
+            **plugin_config,
+            "smart_zoom_enabled": False,
+            "frame_description_enabled": True,
+        }
+        plugin = OpenAIPlugin(config)
+        frames = self._make_frames(tmp_path, count=1)
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED,
+            data={"frames": frames},
+        )
+
+        plugin.on_frames_extracted(context)
+
+        assert "frame_descriptions" in context.shared
+        assert "smart_zoom" not in context.shared
+
+
+# ------------------------------------------------------------------
+# on_post_render — frame description integration
+# ------------------------------------------------------------------
+
+
+class TestOnPostRenderFrameDescription:
+    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    def test_frame_summary_passed_to_metadata(
+        self,
+        mock_gen: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        from reeln_openai_plugin.frames import FrameDescriptions
+        from reeln_openai_plugin.short_metadata import ShortMetadata
+
+        mock_gen.return_value = ShortMetadata(title="T", description="D")
+        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        plugin._game_info = FakeGameInfo()
+        plugin._frame_descriptions = FrameDescriptions(
+            descriptions=("shot", "goal"),
+            summary="Wrist shot goal",
+        )
+
+        plan = MagicMock()
+        plan.filter_complex = "filter"
+        plan.output = MagicMock()
+        plan.output.stem = "clip"
+        context = HookContext(hook=Hook.POST_RENDER, data={"plan": plan, "result": MagicMock()})
+
+        plugin.on_post_render(context)
+
+        call_kwargs = mock_gen.call_args[1]
+        assert call_kwargs["frame_summary"] == "Wrist shot goal"
+
+    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    def test_frame_descriptions_cleared_after_use(
+        self,
+        mock_gen: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        from reeln_openai_plugin.frames import FrameDescriptions
+        from reeln_openai_plugin.short_metadata import ShortMetadata
+
+        mock_gen.return_value = ShortMetadata(title="T", description="D")
+        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        plugin._game_info = FakeGameInfo()
+        plugin._frame_descriptions = FrameDescriptions(
+            descriptions=("d",), summary="s",
+        )
+
+        plan = MagicMock()
+        plan.filter_complex = "filter"
+        plan.output = MagicMock()
+        plan.output.stem = "clip"
+        context = HookContext(hook=Hook.POST_RENDER, data={"plan": plan, "result": MagicMock()})
+
+        plugin.on_post_render(context)
+
+        assert plugin._frame_descriptions is None
+
+    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    def test_no_frame_descriptions_empty_summary(
+        self,
+        mock_gen: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        from reeln_openai_plugin.short_metadata import ShortMetadata
+
+        mock_gen.return_value = ShortMetadata(title="T", description="D")
+        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        plugin._game_info = FakeGameInfo()
+        assert plugin._frame_descriptions is None
+
+        plan = MagicMock()
+        plan.filter_complex = "filter"
+        plan.output = MagicMock()
+        plan.output.stem = "clip"
+        context = HookContext(hook=Hook.POST_RENDER, data={"plan": plan, "result": MagicMock()})
+
+        plugin.on_post_render(context)
+
+        call_kwargs = mock_gen.call_args[1]
+        assert call_kwargs["frame_summary"] == ""
 
 
 # ------------------------------------------------------------------

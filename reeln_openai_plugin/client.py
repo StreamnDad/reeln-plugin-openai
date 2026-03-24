@@ -48,13 +48,24 @@ class OpenAIClient:
         prompt: str,
         schema: dict[str, Any],
         schema_name: str,
+        *,
+        images: list[str] | None = None,
+        model_override: str | None = None,
     ) -> dict[str, Any]:
         """Send a text prompt and return the parsed JSON response.
 
         The API is instructed to return JSON conforming to *schema* via the
-        ``json_schema`` response format.
+        ``json_schema`` response format.  When *images* is provided, base64
+        PNG images are prepended as ``input_image`` content blocks.  When
+        *model_override* is set it replaces the client's default model.
         """
-        payload = self._build_payload(prompt, schema, schema_name)
+        payload = self._build_payload(
+            prompt,
+            schema,
+            schema_name,
+            images=images,
+            model_override=model_override,
+        )
         raw = self._post(payload)
         return self._parse_response(raw)
 
@@ -102,13 +113,21 @@ class OpenAIClient:
         prompt: str,
         schema: dict[str, Any],
         schema_name: str,
+        *,
+        images: list[str] | None = None,
+        model_override: str | None = None,
     ) -> dict[str, Any]:
+        content: list[dict[str, str]] = []
+        if images:
+            content.extend({"type": "input_image", "image_url": f"data:image/png;base64,{b64}"} for b64 in images)
+        content.append({"type": "input_text", "text": prompt})
+
         return {
-            "model": self._model,
+            "model": model_override if model_override is not None else self._model,
             "input": [
                 {
                     "role": "user",
-                    "content": [{"type": "input_text", "text": prompt}],
+                    "content": content,
                 },
             ],
             "text": {
@@ -130,8 +149,7 @@ class OpenAIClient:
         output_format: str,
     ) -> dict[str, Any]:
         content: list[dict[str, str]] = [
-            {"type": "input_image", "image_url": f"data:image/png;base64,{b64}"}
-            for b64 in images
+            {"type": "input_image", "image_url": f"data:image/png;base64,{b64}"} for b64 in images
         ]
         content.append({"type": "input_text", "text": prompt})
 
@@ -182,7 +200,10 @@ class OpenAIClient:
         raise OpenAIError("No image output found in API response")
 
     def _post(
-        self, payload: dict[str, Any], *, timeout: float | None = None,
+        self,
+        payload: dict[str, Any],
+        *,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         """POST *payload* to the OpenAI API and return the parsed response."""
         effective_timeout = timeout if timeout is not None else self._timeout

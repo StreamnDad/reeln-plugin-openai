@@ -1,0 +1,11 @@
+You are analyzing a sequence of frames from a video highlight clip.
+The frames are in chronological order.
+
+Task:
+- Describe what happens in each frame in 1-2 sentences.
+- Then provide a brief summary of the overall play (1-2 sentences).
+- Focus on the action, movement, and outcome.
+- Keep descriptions concise and energetic.
+
+Return JSON with:
+{"descriptions": ["Frame 1 description", ...], "summary": "Overall summary"}

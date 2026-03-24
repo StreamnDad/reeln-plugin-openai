@@ -81,7 +81,10 @@ class TestGeneratePlaylistMetadata:
         info = FakeGameInfo()
 
         result = generate_playlist_metadata(
-            client, registry, info, livestream_title="Live: Eagles vs Hawks",
+            client,
+            registry,
+            info,
+            livestream_title="Live: Eagles vs Hawks",
         )
 
         assert result.title == "Playlist Title"

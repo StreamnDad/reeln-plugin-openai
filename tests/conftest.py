@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,19 @@ class FakeGameInfo:
     game_time: str = ""
     description: str = ""
     thumbnail: str = ""
+    level: str = ""
+
+
+@dataclass
+class FakeGameEvent:
+    """Minimal stand-in for ``reeln.models.game.GameEvent``."""
+
+    id: str = "evt-001"
+    clip: str = "clip.mp4"
+    segment_number: int = 1
+    event_type: str = "goal"
+    player: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -40,6 +53,18 @@ class FakeTeamInfo:
     logo_path: Path | None = None
     colors: str = "Red, White"
     game_level: str = "Varsity"
+
+
+@dataclass
+class FakeExtractedFrames:
+    """Minimal stand-in for ``reeln.models.zoom.ExtractedFrames``."""
+
+    frame_paths: tuple[Path, ...] = ()
+    timestamps: tuple[float, ...] = ()
+    source_width: int = 1920
+    source_height: int = 1080
+    duration: float = 10.0
+    fps: float = 59.94
 
 
 @pytest.fixture()
