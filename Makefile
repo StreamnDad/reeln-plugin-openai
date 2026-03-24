@@ -1,6 +1,6 @@
 PLUGIN_PKG := reeln_openai_plugin
 
-.PHONY: dev-install test lint format check
+.PHONY: dev-install install test lint format check
 
 VENV := .venv/bin
 
@@ -8,6 +8,9 @@ dev-install:
 	uv venv --clear
 	uv pip install -e ../reeln-cli
 	uv pip install -e ".[dev]"
+
+install:
+	uv pip install --python ~/.local/share/uv/tools/reeln/bin/python3 -e .
 
 test:
 	$(VENV)/python -m pytest tests/ -n auto --cov=$(PLUGIN_PKG) --cov-branch --cov-fail-under=100 -q

@@ -64,7 +64,10 @@ class TestTranslateBatch:
         registry = PromptRegistry()
 
         result = translate_metadata(
-            client, registry, "Title", "Desc",
+            client,
+            registry,
+            "Title",
+            "Desc",
             languages={"fi": "Finnish", "sv": "Swedish"},
         )
 
@@ -84,7 +87,10 @@ class TestTranslateBatch:
         registry = PromptRegistry()
 
         result = translate_metadata(
-            client, registry, "Title", "Desc",
+            client,
+            registry,
+            "Title",
+            "Desc",
             languages={"fi": "Finnish"},
         )
 
@@ -115,7 +121,10 @@ class TestTranslatePerLanguage:
         registry = PromptRegistry()
 
         result = translate_metadata(
-            client, registry, "Title", "Desc",
+            client,
+            registry,
+            "Title",
+            "Desc",
             languages={"fi": "Finnish", "sv": "Swedish"},
             per_language_prompts={"fi": "translate_single", "sv": "translate_single"},
         )
@@ -135,7 +144,10 @@ class TestTranslatePerLanguage:
 
         with caplog.at_level(logging.WARNING):
             result = translate_metadata(
-                client, registry, "Title", "Desc",
+                client,
+                registry,
+                "Title",
+                "Desc",
                 languages={"fi": "Finnish", "sv": "Swedish"},
                 per_language_prompts={"fi": "translate_single", "sv": "translate_single"},
             )
@@ -151,7 +163,10 @@ class TestTranslatePerLanguage:
         registry = PromptRegistry()
 
         result = translate_metadata(
-            client, registry, "Title", "Desc",
+            client,
+            registry,
+            "Title",
+            "Desc",
             languages={"fi": "Finnish"},
             per_language_prompts={"sv": "custom_sv_prompt"},
         )
@@ -166,7 +181,10 @@ class TestTranslatePerLanguage:
 
         with caplog.at_level(logging.WARNING):
             result = translate_metadata(
-                client, registry, "Title", "Desc",
+                client,
+                registry,
+                "Title",
+                "Desc",
                 languages={"fi": "Finnish"},
                 per_language_prompts={"fi": "translate_single"},
             )
@@ -187,7 +205,10 @@ class TestModeSelection:
         registry = PromptRegistry()
 
         translate_metadata(
-            client, registry, "Title", "Desc",
+            client,
+            registry,
+            "Title",
+            "Desc",
             languages={"fi": "Finnish"},
             per_language_prompts=None,
         )
@@ -202,7 +223,10 @@ class TestModeSelection:
         registry = PromptRegistry()
 
         translate_metadata(
-            client, registry, "Title", "Desc",
+            client,
+            registry,
+            "Title",
+            "Desc",
             languages={"fi": "Finnish"},
             per_language_prompts={"fi": "translate_single"},
         )

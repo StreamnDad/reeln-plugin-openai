@@ -74,7 +74,12 @@ def translate_metadata(
 
     if per_language_prompts:
         return _translate_per_language(
-            client, prompt_registry, title, description, languages, per_language_prompts,
+            client,
+            prompt_registry,
+            title,
+            description,
+            languages,
+            per_language_prompts,
         )
     return _translate_batch(client, prompt_registry, title, description, languages)
 
