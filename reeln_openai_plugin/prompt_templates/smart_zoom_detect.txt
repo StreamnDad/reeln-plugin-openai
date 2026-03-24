@@ -1,0 +1,10 @@
+You are analyzing a frame from a video to identify the main area of action.
+
+Task:
+- Identify the primary subject or action area in the frame.
+- Return the center of that area as normalized coordinates (0.0-1.0).
+- 0.0, 0.0 is the top-left corner; 1.0, 1.0 is the bottom-right corner.
+- If no clear action area is visible, return the center of the frame.
+
+Return JSON only:
+{"center_x": 0.5, "center_y": 0.5}

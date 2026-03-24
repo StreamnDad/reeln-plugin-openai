@@ -25,6 +25,7 @@ class TestRepr:
         assert "[REDACTED]" in r
         assert "gpt-test" in r
 
+
 # ------------------------------------------------------------------
 # read_api_key
 # ------------------------------------------------------------------
@@ -54,11 +55,66 @@ class TestBuildPayload:
 
         assert payload["model"] == "gpt-test"
         assert payload["input"][0]["role"] == "user"
+        # Text-only: single content block
+        assert len(payload["input"][0]["content"]) == 1
         assert payload["input"][0]["content"][0]["type"] == "input_text"
         assert payload["input"][0]["content"][0]["text"] == "hello"
         assert payload["text"]["format"]["type"] == "json_schema"
         assert payload["text"]["format"]["name"] == "test_schema"
         assert payload["text"]["format"]["schema"] is schema
+
+    def test_backward_compat_no_images(self) -> None:
+        """Calling without images/model_override produces text-only payload."""
+        client = OpenAIClient(api_key="k", model="gpt-test")
+        schema: dict[str, Any] = {"type": "object", "properties": {}}
+        payload = client._build_payload("hi", schema, "s")
+        content = payload["input"][0]["content"]
+        assert len(content) == 1
+        assert content[0]["type"] == "input_text"
+        assert payload["model"] == "gpt-test"
+
+    def test_with_images(self) -> None:
+        client = OpenAIClient(api_key="k", model="gpt-test")
+        schema: dict[str, Any] = {"type": "object", "properties": {}}
+        payload = client._build_payload(
+            "analyze",
+            schema,
+            "zoom",
+            images=["b64_frame1", "b64_frame2"],
+        )
+        content = payload["input"][0]["content"]
+        assert len(content) == 3
+        assert content[0]["type"] == "input_image"
+        assert content[0]["image_url"] == "data:image/png;base64,b64_frame1"
+        assert content[1]["type"] == "input_image"
+        assert content[1]["image_url"] == "data:image/png;base64,b64_frame2"
+        assert content[2]["type"] == "input_text"
+        assert content[2]["text"] == "analyze"
+
+    def test_model_override(self) -> None:
+        client = OpenAIClient(api_key="k", model="gpt-default")
+        schema: dict[str, Any] = {"type": "object", "properties": {}}
+        payload = client._build_payload(
+            "p",
+            schema,
+            "s",
+            model_override="gpt-vision",
+        )
+        assert payload["model"] == "gpt-vision"
+
+    def test_model_override_none_uses_default(self) -> None:
+        client = OpenAIClient(api_key="k", model="gpt-default")
+        schema: dict[str, Any] = {"type": "object", "properties": {}}
+        payload = client._build_payload("p", schema, "s", model_override=None)
+        assert payload["model"] == "gpt-default"
+
+    def test_empty_images_list(self) -> None:
+        client = OpenAIClient(api_key="k", model="gpt-test")
+        schema: dict[str, Any] = {"type": "object", "properties": {}}
+        payload = client._build_payload("p", schema, "s", images=[])
+        content = payload["input"][0]["content"]
+        assert len(content) == 1
+        assert content[0]["type"] == "input_text"
 
 
 # ------------------------------------------------------------------
@@ -279,8 +335,12 @@ class TestBuildImagePayload:
     def test_no_images(self) -> None:
         client = OpenAIClient(api_key="k")
         payload = client._build_image_payload(
-            prompt="p", images=[], model="m", renderer_model="r",
-            renderer_size="s", output_format="png",
+            prompt="p",
+            images=[],
+            model="m",
+            renderer_model="r",
+            renderer_size="s",
+            output_format="png",
         )
         content = payload["input"][0]["content"]
         assert len(content) == 1

@@ -1,0 +1,21 @@
+You are generating a concise YouTube Shorts title for a {{sport}} highlight clip.
+
+Teams: {{home_team}} vs {{away_team}}
+Date: {{date}}
+Level: {{team_level}}
+Event: {{event}}
+Player: {{player}}
+Assists: {{assists}}
+Clip: {{clip_name}}
+Context: {{description}}
+Frame analysis: {{frame_summary}}
+
+Rules:
+- Max 100 characters (YouTube truncates long titles on Shorts).
+- Include both team names.
+- Include the player name if available.
+- Make it attention-grabbing and suitable for short-form vertical video.
+- Do not include "#Shorts" — it will be appended automatically.
+- Do not include hashtags.
+
+Return a JSON object with a "title" key.
