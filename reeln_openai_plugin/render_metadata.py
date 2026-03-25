@@ -1,4 +1,4 @@
-"""Short video title and description generation via OpenAI."""
+"""Render metadata (title and description) generation via OpenAI."""
 
 from __future__ import annotations
 
@@ -14,14 +14,14 @@ log: logging.Logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class ShortMetadata:
-    """Generated short video title and description."""
+class RenderMetadata:
+    """Generated render metadata (title and description)."""
 
     title: str
     description: str
 
 
-SHORT_SCHEMA: dict[str, Any] = {
+RENDER_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "title": {"type": "string"},
@@ -32,7 +32,7 @@ SHORT_SCHEMA: dict[str, Any] = {
 }
 
 
-def generate_short_metadata(
+def generate_render_metadata(
     client: OpenAIClient,
     prompt_registry: PromptRegistry,
     game_info: object,
@@ -42,10 +42,10 @@ def generate_short_metadata(
     assists: str = "",
     event_type: str = "",
     level: str = "",
-) -> ShortMetadata:
-    """Generate a short video title and description from *game_info*.
+) -> RenderMetadata:
+    """Generate render metadata (title and description) from *game_info*.
 
-    Renders the ``short_title`` and ``short_description`` prompts,
+    Renders the ``render_title`` and ``render_description`` prompts,
     combines them into a single API call, and returns the structured result.
 
     When *clip_name* is provided it is included as a template variable
@@ -71,18 +71,18 @@ def generate_short_metadata(
     if level:
         variables["team_level"] = level
 
-    title_prompt = prompt_registry.render("short_title", variables)
-    desc_prompt = prompt_registry.render("short_description", variables)
+    title_prompt = prompt_registry.render("render_title", variables)
+    desc_prompt = prompt_registry.render("render_description", variables)
 
     combined_prompt = f"{title_prompt}\n\n---\n\n{desc_prompt}"
 
     result = client.request_structured(
         prompt=combined_prompt,
-        schema=SHORT_SCHEMA,
-        schema_name="short",
+        schema=RENDER_SCHEMA,
+        schema_name="render",
     )
 
-    return ShortMetadata(
+    return RenderMetadata(
         title=result["title"],
         description=result["description"],
     )

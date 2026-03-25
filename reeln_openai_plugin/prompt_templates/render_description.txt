@@ -1,4 +1,4 @@
-You are writing a short YouTube Shorts description for a {{sport}} highlight clip.
+You are writing a short highlight clip description for a {{sport}} highlight clip.
 
 Teams: {{home_team}} vs {{away_team}}
 Date: {{date}}
@@ -12,7 +12,7 @@ Context: {{description}}
 Frame analysis: {{frame_summary}}
 
 Rules:
-- 1-3 sentences max — Shorts descriptions are rarely read in full.
+- 1-3 sentences max.
 - Mention both teams.
 - If the player name is available, mention them by name.
 - Include relevant hashtags at the end (e.g. #hockey #highlights).

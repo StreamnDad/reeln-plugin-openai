@@ -1,4 +1,4 @@
-"""Tests for short metadata generation."""
+"""Tests for render metadata generation."""
 
 from __future__ import annotations
 
@@ -8,49 +8,49 @@ import pytest
 
 from reeln_openai_plugin.client import OpenAIError
 from reeln_openai_plugin.prompts import PromptRegistry
-from reeln_openai_plugin.short_metadata import (
-    SHORT_SCHEMA,
-    ShortMetadata,
-    generate_short_metadata,
+from reeln_openai_plugin.render_metadata import (
+    RENDER_SCHEMA,
+    RenderMetadata,
+    generate_render_metadata,
 )
 from tests.conftest import FakeGameInfo
 
 # ------------------------------------------------------------------
-# ShortMetadata
+# RenderMetadata
 # ------------------------------------------------------------------
 
 
-class TestShortMetadata:
+class TestRenderMetadata:
     def test_frozen(self) -> None:
-        m = ShortMetadata(title="T", description="D")
+        m = RenderMetadata(title="T", description="D")
         with pytest.raises(AttributeError):
             m.title = "X"  # type: ignore[misc]
 
     def test_fields(self) -> None:
-        m = ShortMetadata(title="T", description="D")
+        m = RenderMetadata(title="T", description="D")
         assert m.title == "T"
         assert m.description == "D"
 
 
 # ------------------------------------------------------------------
-# SHORT_SCHEMA
+# RENDER_SCHEMA
 # ------------------------------------------------------------------
 
 
-class TestShortSchema:
+class TestRenderSchema:
     def test_required_fields(self) -> None:
-        assert set(SHORT_SCHEMA["required"]) == {"title", "description"}
+        assert set(RENDER_SCHEMA["required"]) == {"title", "description"}
 
     def test_no_additional_properties(self) -> None:
-        assert SHORT_SCHEMA["additionalProperties"] is False
+        assert RENDER_SCHEMA["additionalProperties"] is False
 
 
 # ------------------------------------------------------------------
-# generate_short_metadata
+# generate_render_metadata
 # ------------------------------------------------------------------
 
 
-class TestGenerateShortMetadata:
+class TestGenerateRenderMetadata:
     def test_success(self) -> None:
         client = MagicMock()
         client.request_structured.return_value = {
@@ -60,15 +60,15 @@ class TestGenerateShortMetadata:
         registry = PromptRegistry()
         info = FakeGameInfo()
 
-        result = generate_short_metadata(client, registry, info)
+        result = generate_render_metadata(client, registry, info)
 
-        assert isinstance(result, ShortMetadata)
+        assert isinstance(result, RenderMetadata)
         assert result.title == "Eagles vs Hawks Goal Highlight"
         assert result.description == "Amazing goal in the Eagles vs Hawks game!"
         client.request_structured.assert_called_once()
 
         call_kwargs = client.request_structured.call_args[1]
-        assert call_kwargs["schema_name"] == "short"
+        assert call_kwargs["schema_name"] == "render"
 
     def test_with_clip_name(self) -> None:
         client = MagicMock()
@@ -79,7 +79,7 @@ class TestGenerateShortMetadata:
         registry = PromptRegistry()
         info = FakeGameInfo()
 
-        result = generate_short_metadata(
+        result = generate_render_metadata(
             client, registry, info, clip_name="goal_001",
         )
 
@@ -96,7 +96,7 @@ class TestGenerateShortMetadata:
         registry = PromptRegistry()
         info = FakeGameInfo()
 
-        result = generate_short_metadata(client, registry, info)
+        result = generate_render_metadata(client, registry, info)
 
         assert result.title == "Title"
         # clip_name placeholder should remain unrendered
@@ -110,7 +110,7 @@ class TestGenerateShortMetadata:
         info = FakeGameInfo()
 
         with pytest.raises(OpenAIError, match="API down"):
-            generate_short_metadata(client, registry, info)
+            generate_render_metadata(client, registry, info)
 
     def test_with_frame_summary(self) -> None:
         client = MagicMock()
@@ -121,7 +121,7 @@ class TestGenerateShortMetadata:
         registry = PromptRegistry()
         info = FakeGameInfo()
 
-        result = generate_short_metadata(
+        result = generate_render_metadata(
             client, registry, info, frame_summary="Wrist shot finds the net",
         )
 
@@ -138,7 +138,7 @@ class TestGenerateShortMetadata:
         registry = PromptRegistry()
         info = FakeGameInfo()
 
-        result = generate_short_metadata(client, registry, info)
+        result = generate_render_metadata(client, registry, info)
 
         assert result.title == "T"
         # frame_summary placeholder should remain unrendered
@@ -154,7 +154,7 @@ class TestGenerateShortMetadata:
         registry = PromptRegistry()
         info = FakeGameInfo(home_team="Storm", away_team="Thunder", sport="hockey")
 
-        generate_short_metadata(client, registry, info)
+        generate_render_metadata(client, registry, info)
 
         call_kwargs = client.request_structured.call_args[1]
         assert "Storm" in call_kwargs["prompt"]
@@ -170,7 +170,7 @@ class TestGenerateShortMetadata:
         registry = PromptRegistry()
         info = FakeGameInfo()
 
-        result = generate_short_metadata(
+        result = generate_render_metadata(
             client, registry, info,
             player="#48 Benjamin Remitz",
             assists="#7 John Smith, #22 Jane Doe",
@@ -190,7 +190,7 @@ class TestGenerateShortMetadata:
         registry = PromptRegistry()
         info = FakeGameInfo()
 
-        result = generate_short_metadata(
+        result = generate_render_metadata(
             client, registry, info,
             event_type="goal",
             level="2016",

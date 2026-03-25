@@ -30,55 +30,38 @@ Run a single test file or test:
 
 This plugin provides OpenAI LLM capabilities to reeln-cli via hooks and the MetadataEnricher capability. It replicates the OpenAI features originally built in `streamn-dad-highlights/replay_publisher/llm.py`.
 
-### Implemented Modules
+### Modules
 
 | Module | Responsibility |
 |---|---|
 | `plugin.py` | `OpenAIPlugin` — plugin lifecycle, hook handlers, config schema |
 | `__init__.py` | Exports `OpenAIPlugin` and `__version__` |
-| `client.py` | OpenAI API client — `/v1/responses` endpoint, JSON schema + image generation |
+| `client.py` | OpenAI API client — `/v1/responses` endpoint, JSON schema + image generation + vision |
 | `prompts.py` | Prompt template engine — `{{variable}}` substitution, template loading |
 | `livestream.py` | Livestream title + description generation via OpenAI |
 | `playlist.py` | Playlist title + description generation via OpenAI |
 | `translate.py` | Translation — batch or per-language with custom commentator personas |
 | `game_image.py` | Game thumbnail generation — team logos + prompt → broadcast-style image |
-
-### Planned Modules
-
-| Module | Responsibility |
-|---|---|
-| `frames.py` | FFmpeg frame extraction — sample N frames, scale, base64 encode |
-| `metadata.py` | Video metadata generation — title, description, hashtags from frames |
-| `zoom.py` | Intelligent zoom — smart crop (multi-frame) and replay zoom (single-frame) |
-| `cache.py` | Result caching — zoom point cache with configurable directory |
-
-### Key Features (ported from streamn-dad-highlights)
-
-1. **Video metadata** — analyze video frames via vision API to generate title/description/hashtags
-2. **Text-only metadata** — generate metadata from text prompts (game summaries, playlist descriptions)
-3. **Smart zoom** — multi-frame puck/action tracking for vertical video crops
-4. **Replay zoom** — single-frame net center detection for crop centering
-5. **Translation** — batch or per-language translation with custom commentator persona prompts
-6. **Prompt templates** — `{{variable}}` substitution with external template files
+| `zoom.py` | Smart zoom — per-frame vision analysis for action area detection |
+| `frames.py` | Frame description — multi-frame vision analysis for play-by-play summary |
+| `render_metadata.py` | Render metadata — LLM-generated title + description for rendered clips |
 
 ### Key Hooks
 
-- **`ON_CLIP_AVAILABLE`** — enrich clip metadata with LLM-generated title/description/hashtags
-- **`ON_HIGHLIGHTS_MERGED`** — generate game summary metadata
-- **`PRE_RENDER`** — compute smart zoom / replay zoom points for render plan
-
-### Plugin Capabilities
-
-- **MetadataEnricher** — `enrich(event_data)` returns enriched metadata with LLM fields
+- **`ON_GAME_INIT`** — generate livestream/playlist metadata, game image, cache game_info
+- **`ON_FRAMES_EXTRACTED`** — smart zoom target detection + frame description generation
+- **`POST_RENDER`** — generate render metadata (title/description) for uploaded clips
 
 ### Shared Context Convention
 
 Plugins communicate via `HookContext.shared` (mutable dict on frozen dataclass):
 ```python
-context.shared["metadata"]["title"] = "Amazing Goal by #12"
-context.shared["metadata"]["description"] = "..."
-context.shared["metadata"]["hashtags"] = ["#hockey", "#goal"]
-context.shared["zoom_points"] = [(0.45, 0.52), (0.48, 0.55), ...]
+context.shared["livestream_metadata"] = {"title": "...", "description": "..."}
+context.shared["playlist_metadata"] = {"title": "...", "description": "..."}
+context.shared["game_image"] = {"image_path": "/path/to/image.png"}
+context.shared["smart_zoom"] = {"zoom_path": ZoomPath(...)}
+context.shared["frame_descriptions"] = {"descriptions": [...], "summary": "..."}
+context.shared["render_metadata"] = {"title": "...", "description": "..."}
 ```
 
 ### External Dependencies
