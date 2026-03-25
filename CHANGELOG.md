@@ -4,39 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.7.0] - 2026-03-23
-
-### Added
-
-- Player name, assists, event type, and team level now passed as context to short title/description prompt templates (`{{player}}`, `{{assists}}`, `{{event}}`, `{{team_level}}`)
-- Bundled prompt templates updated with player/event/level fields for richer AI-generated metadata
-
-## [0.6.0] - 2026-03-23
-
-### Added
-
-- `POST_RENDER` hook handler — generates LLM-powered title and description for short/rendered video uploads via `short_metadata_enabled` config flag
-- `short_metadata.py` module with `ShortMetadata` model and `generate_short_metadata()` function
-- Bundled prompt templates: `short_title.txt` and `short_description.txt`
-- `short_metadata_enabled` config field (default `false`) — opt-in LLM metadata for shorts
-- Game info cached during `ON_GAME_INIT` for use in `POST_RENDER` metadata generation
-- Writes `short_title` and `short_description` to `context.shared["uploads"]["google"]` for Google plugin consumption
-- Frame description generation (`frames.py`) — analyze all extracted frames via OpenAI vision to generate per-frame descriptions and overall play summary
-- `frame_description_enabled` and `frame_description_model` config fields
-- Bundled prompt template: `frame_describe`
-- Frame descriptions cached on plugin instance and fed as `{{frame_summary}}` context to short metadata prompts
-- Frame descriptions written to `context.shared["frame_descriptions"]` with `descriptions` list and `summary`
-
-## [0.5.0] - 2026-03-20
+## [0.8.0] - 2026-03-25
 
 ### Added
 
 - Smart zoom target detection (`zoom.py`) — analyze video frames via OpenAI vision API to identify action areas for dynamic crop panning
 - `ON_FRAMES_EXTRACTED` hook handler — iterates extracted frames, calls vision API per frame, writes `ZoomPath` to `context.shared["smart_zoom"]`
 - `smart_zoom_enabled` and `smart_zoom_model` config fields
-- Bundled prompt template: `smart_zoom_detect`
 - Vision support on `request_structured()` — optional `images` and `model_override` keyword arguments for sending base64 images with structured JSON requests
 - Per-frame fallback to center `(0.5, 0.5)` on API failure; no shared write when all frames fail
+- `POST_RENDER` hook handler — generates LLM-powered title and description for rendered clips via `render_metadata_enabled` config flag
+- `render_metadata.py` module with `RenderMetadata` model and `generate_render_metadata()` function
+- Bundled prompt templates: `render_title`, `render_description`, `smart_zoom_detect`, `frame_describe`
+- `render_metadata_enabled` config field (default `false`) — opt-in LLM metadata for rendered clips
+- Game info cached during `ON_GAME_INIT` for use in `POST_RENDER` metadata generation
+- Render metadata written to `context.shared["render_metadata"]` (platform-agnostic)
+- Frame description generation (`frames.py`) — analyze all extracted frames via OpenAI vision to generate per-frame descriptions and overall play summary
+- `frame_description_enabled` and `frame_description_model` config fields
+- Frame descriptions cached on plugin instance and fed as `{{frame_summary}}` context to render metadata prompts
+- Frame descriptions written to `context.shared["frame_descriptions"]` with `descriptions` list and `summary`
+- Player name, assists, event type, and team level passed as context to render metadata prompt templates (`{{player}}`, `{{assists}}`, `{{event}}`, `{{team_level}}`)
 
 ## [0.4.2] - 2026-03-15
 

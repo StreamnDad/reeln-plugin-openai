@@ -19,7 +19,7 @@ from reeln_openai_plugin.game_image import generate_game_image
 from reeln_openai_plugin.livestream import generate_livestream_metadata
 from reeln_openai_plugin.playlist import generate_playlist_metadata
 from reeln_openai_plugin.prompts import PromptRegistry
-from reeln_openai_plugin.short_metadata import generate_short_metadata
+from reeln_openai_plugin.render_metadata import generate_render_metadata
 from reeln_openai_plugin.translate import translate_metadata
 from reeln_openai_plugin.zoom import FALLBACK_CENTER, analyze_frame_for_zoom
 
@@ -35,7 +35,7 @@ class OpenAIPlugin:
     """
 
     name: str = "openai"
-    version: str = "0.7.0"
+    version: str = "0.8.0"
     api_version: int = 1
 
     config_schema: PluginConfigSchema = PluginConfigSchema(
@@ -126,10 +126,10 @@ class OpenAIPlugin:
                 description="Directory to save generated game images",
             ),
             ConfigField(
-                name="short_metadata_enabled",
+                name="render_metadata_enabled",
                 field_type="bool",
                 default=False,
-                description="Enable LLM-generated title and description for short uploads",
+                description="Enable LLM-generated title and description for rendered clips",
             ),
             ConfigField(
                 name="smart_zoom_enabled",
@@ -361,22 +361,18 @@ class OpenAIPlugin:
 
     def on_post_render(self, context: HookContext) -> None:
         """Handle ``POST_RENDER`` — generate short title and description."""
-        if not self._config.get("short_metadata_enabled", False):
+        if not self._config.get("render_metadata_enabled", False):
             return
 
         # game_info may be cached from ON_GAME_INIT (same process) or passed
         # through the hook data (separate CLI invocation like render short).
         game_info = self._game_info or context.data.get("game_info")
         if game_info is None:
-            log.debug("%s plugin: no game_info available, skipping short metadata", self.name)
+            log.debug("%s plugin: no game_info available, skipping render metadata", self.name)
             return
 
         plan = context.data.get("plan")
         if plan is None:
-            return
-
-        # Only enrich renders that have a filter chain (shorts/applies with filters)
-        if getattr(plan, "filter_complex", None) is None:
             return
 
         try:
@@ -400,7 +396,7 @@ class OpenAIPlugin:
         level = getattr(game_info, "level", "")
 
         try:
-            metadata = generate_short_metadata(
+            metadata = generate_render_metadata(
                 client,
                 self._prompt_registry,
                 game_info,
@@ -412,14 +408,14 @@ class OpenAIPlugin:
                 level=level,
             )
         except OpenAIError as exc:
-            log.warning("%s plugin: short metadata generation failed: %s", self.name, exc)
+            log.warning("%s plugin: render metadata generation failed: %s", self.name, exc)
             return
 
-        context.shared["uploads"] = context.shared.get("uploads", {})
-        google = context.shared["uploads"].setdefault("google", {})
-        google["short_title"] = metadata.title
-        google["short_description"] = metadata.description
-        log.info("%s plugin: generated short metadata: %s", self.name, metadata.title)
+        context.shared["render_metadata"] = {
+            "title": metadata.title,
+            "description": metadata.description,
+        }
+        log.info("%s plugin: generated render metadata: %s", self.name, metadata.title)
 
     def on_frames_extracted(self, context: HookContext) -> None:
         """Handle ``ON_FRAMES_EXTRACTED`` — analyze frames for zoom targets and describe frames."""

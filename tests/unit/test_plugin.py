@@ -26,7 +26,7 @@ class TestPluginAttributes:
 
     def test_version(self) -> None:
         plugin = OpenAIPlugin()
-        assert plugin.version == "0.7.0"
+        assert plugin.version == "0.8.0"
 
     def test_api_version(self) -> None:
         plugin = OpenAIPlugin()
@@ -57,9 +57,9 @@ class TestPluginConfigSchema:
         assert "game_image_renderer_model" in names
         assert "game_image_output_dir" in names
 
-    def test_has_short_metadata_field(self) -> None:
+    def test_has_render_metadata_field(self) -> None:
         names = [f.name for f in OpenAIPlugin.config_schema.fields]
-        assert "short_metadata_enabled" in names
+        assert "render_metadata_enabled" in names
 
     def test_has_smart_zoom_fields(self) -> None:
         names = [f.name for f in OpenAIPlugin.config_schema.fields]
@@ -81,7 +81,7 @@ class TestPluginConfigSchema:
         assert defaults["game_image_model"] == "gpt-5.2"
         assert defaults["game_image_renderer_model"] == "gpt-image-1.5"
         assert defaults["game_image_output_dir"] == ""
-        assert defaults["short_metadata_enabled"] is False
+        assert defaults["render_metadata_enabled"] is False
         assert defaults["smart_zoom_enabled"] is False
         assert defaults["smart_zoom_model"] == "gpt-4.1"
         assert defaults["frame_description_enabled"] is False
@@ -533,7 +533,7 @@ class TestOnGameInitPlaylist:
 
 class TestOnPostRender:
     def test_disabled_skips(self, plugin_config: dict[str, Any]) -> None:
-        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": False})
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": False})
         plugin._game_info = FakeGameInfo()
         plan = MagicMock()
         plan.filter_complex = "filter"
@@ -541,10 +541,10 @@ class TestOnPostRender:
 
         plugin.on_post_render(context)
 
-        assert "uploads" not in context.shared
+        assert "render_metadata" not in context.shared
 
     def test_no_game_info_skips(self, plugin_config: dict[str, Any]) -> None:
-        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
         # _game_info not set (no game init happened)
         plan = MagicMock()
         plan.filter_complex = "filter"
@@ -552,27 +552,16 @@ class TestOnPostRender:
 
         plugin.on_post_render(context)
 
-        assert "uploads" not in context.shared
+        assert "render_metadata" not in context.shared
 
     def test_no_plan_skips(self, plugin_config: dict[str, Any]) -> None:
-        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
         plugin._game_info = FakeGameInfo()
         context = HookContext(hook=Hook.POST_RENDER, data={"result": MagicMock()})
 
         plugin.on_post_render(context)
 
-        assert "uploads" not in context.shared
-
-    def test_no_filter_complex_skips(self, plugin_config: dict[str, Any]) -> None:
-        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
-        plugin._game_info = FakeGameInfo()
-        plan = MagicMock()
-        plan.filter_complex = None
-        context = HookContext(hook=Hook.POST_RENDER, data={"plan": plan, "result": MagicMock()})
-
-        plugin.on_post_render(context)
-
-        assert "uploads" not in context.shared
+        assert "render_metadata" not in context.shared
 
     @patch.dict("os.environ", {}, clear=True)
     def test_client_failure_warns(
@@ -581,7 +570,7 @@ class TestOnPostRender:
         tmp_path: Path,
     ) -> None:
         config: dict[str, Any] = {
-            "short_metadata_enabled": True,
+            "render_metadata_enabled": True,
             "api_key_file": str(tmp_path / "missing.txt"),
         }
         plugin = OpenAIPlugin(config)
@@ -594,18 +583,18 @@ class TestOnPostRender:
             plugin.on_post_render(context)
 
         assert "client setup failed" in caplog.text
-        assert "uploads" not in context.shared
+        assert "render_metadata" not in context.shared
 
-    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
     def test_success(
         self,
         mock_gen: MagicMock,
         plugin_config: dict[str, Any],
     ) -> None:
-        from reeln_openai_plugin.short_metadata import ShortMetadata
+        from reeln_openai_plugin.render_metadata import RenderMetadata
 
-        mock_gen.return_value = ShortMetadata(title="Amazing Goal!", description="Great play!")
-        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        mock_gen.return_value = RenderMetadata(title="Amazing Goal!", description="Great play!")
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
         plugin._game_info = FakeGameInfo()
 
         plan = MagicMock()
@@ -616,20 +605,20 @@ class TestOnPostRender:
 
         plugin.on_post_render(context)
 
-        assert context.shared["uploads"]["google"]["short_title"] == "Amazing Goal!"
-        assert context.shared["uploads"]["google"]["short_description"] == "Great play!"
+        assert context.shared["render_metadata"]["title"] == "Amazing Goal!"
+        assert context.shared["render_metadata"]["description"] == "Great play!"
         mock_gen.assert_called_once()
 
-    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
     def test_passes_clip_name(
         self,
         mock_gen: MagicMock,
         plugin_config: dict[str, Any],
     ) -> None:
-        from reeln_openai_plugin.short_metadata import ShortMetadata
+        from reeln_openai_plugin.render_metadata import RenderMetadata
 
-        mock_gen.return_value = ShortMetadata(title="T", description="D")
-        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        mock_gen.return_value = RenderMetadata(title="T", description="D")
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
         plugin._game_info = FakeGameInfo()
 
         plan = MagicMock()
@@ -643,7 +632,7 @@ class TestOnPostRender:
         call_kwargs = mock_gen.call_args[1]
         assert call_kwargs["clip_name"] == "clip_highlight"
 
-    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
     def test_generation_failure_non_fatal(
         self,
         mock_gen: MagicMock,
@@ -653,7 +642,7 @@ class TestOnPostRender:
         from reeln_openai_plugin.client import OpenAIError
 
         mock_gen.side_effect = OpenAIError("API down")
-        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
         plugin._game_info = FakeGameInfo()
 
         plan = MagicMock()
@@ -663,50 +652,48 @@ class TestOnPostRender:
         with caplog.at_level(logging.WARNING):
             plugin.on_post_render(context)
 
-        assert "short metadata generation failed" in caplog.text
-        assert "uploads" not in context.shared
+        assert "render metadata generation failed" in caplog.text
+        assert "render_metadata" not in context.shared
 
-    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
     def test_preserves_existing_shared(
         self,
         mock_gen: MagicMock,
         plugin_config: dict[str, Any],
     ) -> None:
-        """When shared context already has uploads data, short metadata is merged in."""
-        from reeln_openai_plugin.short_metadata import ShortMetadata
+        """Render metadata is written alongside existing shared data."""
+        from reeln_openai_plugin.render_metadata import RenderMetadata
 
-        mock_gen.return_value = ShortMetadata(title="T", description="D")
-        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        mock_gen.return_value = RenderMetadata(title="T", description="D")
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
         plugin._game_info = FakeGameInfo()
 
         plan = MagicMock()
-        plan.filter_complex = "filter"
         plan.output = MagicMock()
         plan.output.stem = "clip"
         context = HookContext(
             hook=Hook.POST_RENDER,
             data={"plan": plan, "result": MagicMock()},
-            shared={"uploads": {"google": {"existing": "data"}}},
+            shared={"existing_key": "data"},
         )
 
         plugin.on_post_render(context)
 
-        google = context.shared["uploads"]["google"]
-        assert google["existing"] == "data"
-        assert google["short_title"] == "T"
-        assert google["short_description"] == "D"
+        assert context.shared["existing_key"] == "data"
+        assert context.shared["render_metadata"]["title"] == "T"
+        assert context.shared["render_metadata"]["description"] == "D"
 
-    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
     def test_uses_game_info_from_hook_data(
         self,
         mock_gen: MagicMock,
         plugin_config: dict[str, Any],
     ) -> None:
         """When _game_info is None, fall back to context.data['game_info']."""
-        from reeln_openai_plugin.short_metadata import ShortMetadata
+        from reeln_openai_plugin.render_metadata import RenderMetadata
 
-        mock_gen.return_value = ShortMetadata(title="From Hook", description="D")
-        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        mock_gen.return_value = RenderMetadata(title="From Hook", description="D")
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
         assert plugin._game_info is None
 
         game_info = FakeGameInfo()
@@ -721,23 +708,23 @@ class TestOnPostRender:
 
         plugin.on_post_render(context)
 
-        assert context.shared["uploads"]["google"]["short_title"] == "From Hook"
-        # Verify the game_info was passed to generate_short_metadata
+        assert context.shared["render_metadata"]["title"] == "From Hook"
+        # Verify the game_info was passed to generate_render_metadata
         call_args = mock_gen.call_args
         assert call_args[0][2] is game_info
 
-    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
     def test_passes_player_and_event_context(
         self,
         mock_gen: MagicMock,
         plugin_config: dict[str, Any],
     ) -> None:
         """Player, assists, event_type, and level are forwarded from hook data."""
-        from reeln_openai_plugin.short_metadata import ShortMetadata
+        from reeln_openai_plugin.render_metadata import RenderMetadata
         from tests.conftest import FakeGameEvent
 
-        mock_gen.return_value = ShortMetadata(title="T", description="D")
-        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        mock_gen.return_value = RenderMetadata(title="T", description="D")
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
 
         game_info = FakeGameInfo(level="2016")
         game_event = FakeGameEvent(event_type="goal")
@@ -1508,17 +1495,17 @@ class TestOnFramesExtractedFrameDescription:
 
 
 class TestOnPostRenderFrameDescription:
-    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
     def test_frame_summary_passed_to_metadata(
         self,
         mock_gen: MagicMock,
         plugin_config: dict[str, Any],
     ) -> None:
         from reeln_openai_plugin.frames import FrameDescriptions
-        from reeln_openai_plugin.short_metadata import ShortMetadata
+        from reeln_openai_plugin.render_metadata import RenderMetadata
 
-        mock_gen.return_value = ShortMetadata(title="T", description="D")
-        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        mock_gen.return_value = RenderMetadata(title="T", description="D")
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
         plugin._game_info = FakeGameInfo()
         plugin._frame_descriptions = FrameDescriptions(
             descriptions=("shot", "goal"),
@@ -1536,17 +1523,17 @@ class TestOnPostRenderFrameDescription:
         call_kwargs = mock_gen.call_args[1]
         assert call_kwargs["frame_summary"] == "Wrist shot goal"
 
-    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
     def test_frame_descriptions_cleared_after_use(
         self,
         mock_gen: MagicMock,
         plugin_config: dict[str, Any],
     ) -> None:
         from reeln_openai_plugin.frames import FrameDescriptions
-        from reeln_openai_plugin.short_metadata import ShortMetadata
+        from reeln_openai_plugin.render_metadata import RenderMetadata
 
-        mock_gen.return_value = ShortMetadata(title="T", description="D")
-        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        mock_gen.return_value = RenderMetadata(title="T", description="D")
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
         plugin._game_info = FakeGameInfo()
         plugin._frame_descriptions = FrameDescriptions(
             descriptions=("d",), summary="s",
@@ -1562,16 +1549,16 @@ class TestOnPostRenderFrameDescription:
 
         assert plugin._frame_descriptions is None
 
-    @patch("reeln_openai_plugin.plugin.generate_short_metadata")
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
     def test_no_frame_descriptions_empty_summary(
         self,
         mock_gen: MagicMock,
         plugin_config: dict[str, Any],
     ) -> None:
-        from reeln_openai_plugin.short_metadata import ShortMetadata
+        from reeln_openai_plugin.render_metadata import RenderMetadata
 
-        mock_gen.return_value = ShortMetadata(title="T", description="D")
-        plugin = OpenAIPlugin({**plugin_config, "short_metadata_enabled": True})
+        mock_gen.return_value = RenderMetadata(title="T", description="D")
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
         plugin._game_info = FakeGameInfo()
         assert plugin._frame_descriptions is None
 
