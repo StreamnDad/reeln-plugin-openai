@@ -91,6 +91,22 @@ class TestBuildPromptVariables:
         v = build_prompt_variables(info)
         assert v["description"] == ""
 
+    def test_with_level(self) -> None:
+        info = FakeGameInfo(level="2016")
+        v = build_prompt_variables(info)
+        assert v["level"] == "2016"
+
+    def test_with_tournament(self) -> None:
+        info = FakeGameInfo(tournament="State Championship")
+        v = build_prompt_variables(info)
+        assert v["tournament"] == "State Championship"
+
+    def test_empty_level_and_tournament(self) -> None:
+        info = FakeGameInfo()
+        v = build_prompt_variables(info)
+        assert v["level"] == ""
+        assert v["tournament"] == ""
+
     def test_missing_attributes(self) -> None:
         """Duck-typed object without all attributes still works."""
 

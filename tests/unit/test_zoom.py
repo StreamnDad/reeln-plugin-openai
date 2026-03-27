@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from reeln_openai_plugin.client import OpenAIError
 from reeln_openai_plugin.zoom import (
+    DEFAULT_BACKOFF_MULTIPLIER,
+    DEFAULT_INITIAL_BACKOFF,
+    DEFAULT_MAX_BACKOFF,
+    DEFAULT_MAX_RETRIES,
     FALLBACK_CENTER,
     ZOOM_SCHEMA,
     _clamp,
     _encode_frame,
+    _is_retryable,
     analyze_frame_for_zoom,
 )
 
@@ -123,16 +128,19 @@ class TestAnalyzeFrameForZoom:
 
         assert result == (0.0, 1.0)
 
-    def test_api_error_propagates(self, tmp_path: Path) -> None:
+    def test_non_retryable_error_raises_immediately(self, tmp_path: Path) -> None:
         frame = tmp_path / "frame.png"
         frame.write_bytes(b"\x89PNG")
 
         client = MagicMock()
-        client.request_structured.side_effect = OpenAIError("API down")
+        client.request_structured.side_effect = OpenAIError("HTTP 401 Unauthorized")
         registry = MagicMock()
 
-        with pytest.raises(OpenAIError, match="API down"):
+        with pytest.raises(OpenAIError, match="HTTP 401"):
             analyze_frame_for_zoom(client, registry, frame)
+
+        # Should not retry — called only once
+        assert client.request_structured.call_count == 1
 
     def test_model_override_passed(self, tmp_path: Path) -> None:
         frame = tmp_path / "frame.png"
@@ -182,3 +190,177 @@ class TestAnalyzeFrameForZoom:
         call_args = client.request_structured.call_args[0]
         assert call_args[1] is ZOOM_SCHEMA
         assert call_args[2] == "smart_zoom_detect"
+
+    @patch("reeln_openai_plugin.zoom.time.sleep")
+    def test_retries_on_transient_error(
+        self, mock_sleep: MagicMock, tmp_path: Path
+    ) -> None:
+        """Transient error retries and succeeds on second attempt."""
+        frame = tmp_path / "frame.png"
+        frame.write_bytes(b"\x89PNG")
+
+        client = MagicMock()
+        client.request_structured.side_effect = [
+            OpenAIError("HTTP 500 Internal Server Error"),
+            {"center_x": 0.4, "center_y": 0.6},
+        ]
+        registry = MagicMock()
+
+        result = analyze_frame_for_zoom(client, registry, frame)
+
+        assert result == (0.4, 0.6)
+        assert client.request_structured.call_count == 2
+        mock_sleep.assert_called_once_with(DEFAULT_INITIAL_BACKOFF)
+
+    @patch("reeln_openai_plugin.zoom.time.sleep")
+    def test_retries_exhausted_raises(
+        self, mock_sleep: MagicMock, tmp_path: Path
+    ) -> None:
+        """All retries exhausted raises the last error."""
+        frame = tmp_path / "frame.png"
+        frame.write_bytes(b"\x89PNG")
+
+        client = MagicMock()
+        client.request_structured.side_effect = OpenAIError("HTTP 502 Bad Gateway")
+        registry = MagicMock()
+
+        with pytest.raises(OpenAIError, match="HTTP 502"):
+            analyze_frame_for_zoom(client, registry, frame, max_retries=3)
+
+        assert client.request_structured.call_count == 3
+        assert mock_sleep.call_count == 3
+
+    @patch("reeln_openai_plugin.zoom.time.sleep")
+    def test_backoff_increases_exponentially(
+        self, mock_sleep: MagicMock, tmp_path: Path
+    ) -> None:
+        frame = tmp_path / "frame.png"
+        frame.write_bytes(b"\x89PNG")
+
+        client = MagicMock()
+        client.request_structured.side_effect = OpenAIError("HTTP 500 error")
+        registry = MagicMock()
+
+        with pytest.raises(OpenAIError):
+            analyze_frame_for_zoom(
+                client,
+                registry,
+                frame,
+                max_retries=3,
+                initial_backoff=1.0,
+                backoff_multiplier=2.0,
+                max_backoff=100.0,
+            )
+
+        assert mock_sleep.call_args_list[0][0][0] == 1.0
+        assert mock_sleep.call_args_list[1][0][0] == 2.0
+        assert mock_sleep.call_args_list[2][0][0] == 4.0
+
+    @patch("reeln_openai_plugin.zoom.time.sleep")
+    def test_backoff_capped_at_max(
+        self, mock_sleep: MagicMock, tmp_path: Path
+    ) -> None:
+        frame = tmp_path / "frame.png"
+        frame.write_bytes(b"\x89PNG")
+
+        client = MagicMock()
+        client.request_structured.side_effect = OpenAIError("HTTP 500 error")
+        registry = MagicMock()
+
+        with pytest.raises(OpenAIError):
+            analyze_frame_for_zoom(
+                client,
+                registry,
+                frame,
+                max_retries=3,
+                initial_backoff=10.0,
+                backoff_multiplier=5.0,
+                max_backoff=15.0,
+            )
+
+        assert mock_sleep.call_args_list[0][0][0] == 10.0
+        assert mock_sleep.call_args_list[1][0][0] == 15.0  # capped
+        assert mock_sleep.call_args_list[2][0][0] == 15.0  # still capped
+
+    @patch("reeln_openai_plugin.zoom.time.sleep")
+    def test_rate_limit_retries(
+        self, mock_sleep: MagicMock, tmp_path: Path
+    ) -> None:
+        frame = tmp_path / "frame.png"
+        frame.write_bytes(b"\x89PNG")
+
+        client = MagicMock()
+        client.request_structured.side_effect = [
+            OpenAIError("HTTP 429 Too Many Requests"),
+            {"center_x": 0.5, "center_y": 0.5},
+        ]
+        registry = MagicMock()
+
+        result = analyze_frame_for_zoom(client, registry, frame)
+        assert result == (0.5, 0.5)
+        assert client.request_structured.call_count == 2
+
+
+# ------------------------------------------------------------------
+# _is_retryable
+# ------------------------------------------------------------------
+
+
+class TestIsRetryable:
+    def test_http_500(self) -> None:
+        assert _is_retryable(OpenAIError("HTTP 500 Internal Server Error")) is True
+
+    def test_http_502(self) -> None:
+        assert _is_retryable(OpenAIError("HTTP 502 Bad Gateway")) is True
+
+    def test_http_503(self) -> None:
+        assert _is_retryable(OpenAIError("HTTP 503 Service Unavailable")) is True
+
+    def test_http_429(self) -> None:
+        assert _is_retryable(OpenAIError("HTTP 429 Too Many Requests")) is True
+
+    def test_network_error(self) -> None:
+        assert _is_retryable(OpenAIError("Network error: connection refused")) is True
+
+    def test_timeout(self) -> None:
+        assert _is_retryable(OpenAIError("Request timed out")) is True
+
+    def test_timeout_case_insensitive(self) -> None:
+        assert _is_retryable(OpenAIError("Connection Timed Out")) is True
+
+    def test_http_400_not_retryable(self) -> None:
+        assert _is_retryable(OpenAIError("HTTP 400 Bad Request")) is False
+
+    def test_http_401_not_retryable(self) -> None:
+        assert _is_retryable(OpenAIError("HTTP 401 Unauthorized")) is False
+
+    def test_http_403_not_retryable(self) -> None:
+        assert _is_retryable(OpenAIError("HTTP 403 Forbidden")) is False
+
+    def test_http_404_not_retryable(self) -> None:
+        assert _is_retryable(OpenAIError("HTTP 404 Not Found")) is False
+
+    def test_json_parse_error_not_retryable(self) -> None:
+        assert _is_retryable(OpenAIError("JSON parse error")) is False
+
+    def test_file_io_error_not_retryable(self) -> None:
+        assert _is_retryable(OpenAIError("Cannot read frame file /tmp/f.png")) is False
+
+
+# ------------------------------------------------------------------
+# Retry defaults
+# ------------------------------------------------------------------
+
+
+class TestRetryDefaults:
+    def test_max_retries(self) -> None:
+        assert DEFAULT_MAX_RETRIES == 3
+
+    def test_initial_backoff(self) -> None:
+        assert DEFAULT_INITIAL_BACKOFF == 2.0
+
+    def test_backoff_multiplier(self) -> None:
+        assert DEFAULT_BACKOFF_MULTIPLIER == 2.0
+
+    def test_max_backoff(self) -> None:
+        assert DEFAULT_MAX_BACKOFF == 30.0

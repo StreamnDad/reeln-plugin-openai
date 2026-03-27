@@ -23,6 +23,7 @@ class FakeGameInfo:
     description: str = ""
     thumbnail: str = ""
     level: str = ""
+    tournament: str = ""
 
 
 @dataclass

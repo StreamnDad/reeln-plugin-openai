@@ -344,6 +344,9 @@ class TestGenerateGameImage:
             output_dir=tmp_path,
             model="m",
             renderer_model="r",
+            level="2016",
+            description="Semifinal game",
+            tournament="State Championship",
         )
 
         call_kwargs = client.request_image.call_args[1]
@@ -354,3 +357,6 @@ class TestGenerateGameImage:
         assert "Gold" in prompt
         assert "Big Arena" in prompt
         assert "U14" in prompt
+        assert "2016" in prompt
+        assert "Semifinal game" in prompt
+        assert "State Championship" in prompt

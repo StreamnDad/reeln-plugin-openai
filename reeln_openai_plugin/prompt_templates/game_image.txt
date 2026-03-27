@@ -4,6 +4,9 @@ Teams: {{home_team}} vs {{away_team}}
 Home Team Colors: {{home_colors}}
 Away Team Colors: {{away_colors}}
 Game Level: {{game_level}}
+Level: {{level}}
+Tournament: {{tournament}}
+Context: {{description}}
 Venue: {{rink}}
 Date: {{game_date}}
 Time: {{game_time}}

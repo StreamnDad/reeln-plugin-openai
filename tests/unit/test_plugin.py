@@ -26,7 +26,7 @@ class TestPluginAttributes:
 
     def test_version(self) -> None:
         plugin = OpenAIPlugin()
-        assert plugin.version == "0.8.0"
+        assert plugin.version == "0.8.1"
 
     def test_api_version(self) -> None:
         plugin = OpenAIPlugin()
@@ -1228,49 +1228,17 @@ class TestOnFramesExtracted:
         assert zoom_path.duration == 10.0
 
     @patch("reeln_openai_plugin.plugin.analyze_frame_for_zoom")
-    def test_per_frame_fallback(
+    def test_frame_error_signals_error_in_shared(
         self,
         mock_analyze: MagicMock,
         plugin_config: dict[str, Any],
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """One frame fails, others succeed — fallback on failed frame."""
+        """Frame analysis failure after retries sets error in shared context."""
         from reeln_openai_plugin.client import OpenAIError
 
-        mock_analyze.side_effect = [
-            (0.3, 0.4),
-            OpenAIError("API down"),
-            (0.7, 0.8),
-        ]
-        plugin = OpenAIPlugin({**plugin_config, "smart_zoom_enabled": True})
-        frames = self._make_frames(tmp_path, count=3)
-        context = HookContext(
-            hook=Hook.ON_FRAMES_EXTRACTED,
-            data={"frames": frames},
-        )
-
-        with caplog.at_level(logging.WARNING):
-            plugin.on_frames_extracted(context)
-
-        zoom_path = context.shared["smart_zoom"]["zoom_path"]
-        assert len(zoom_path.points) == 3
-        # Failed frame gets fallback center
-        assert zoom_path.points[1].center_x == 0.5
-        assert zoom_path.points[1].center_y == 0.5
-        assert "using fallback" in caplog.text
-
-    @patch("reeln_openai_plugin.plugin.analyze_frame_for_zoom")
-    def test_all_frames_fail_no_write(
-        self,
-        mock_analyze: MagicMock,
-        plugin_config: dict[str, Any],
-        tmp_path: Path,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        from reeln_openai_plugin.client import OpenAIError
-
-        mock_analyze.side_effect = OpenAIError("API down")
+        mock_analyze.side_effect = OpenAIError("HTTP 500 after retries")
         plugin = OpenAIPlugin({**plugin_config, "smart_zoom_enabled": True})
         frames = self._make_frames(tmp_path, count=2)
         context = HookContext(
@@ -1278,11 +1246,37 @@ class TestOnFramesExtracted:
             data={"frames": frames},
         )
 
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.ERROR):
             plugin.on_frames_extracted(context)
 
-        assert "smart_zoom" not in context.shared
-        assert "all 2 frame analyses failed" in caplog.text
+        assert "smart_zoom" in context.shared
+        assert "error" in context.shared["smart_zoom"]
+        assert "HTTP 500" in context.shared["smart_zoom"]["error"]
+        assert "failed after retries" in caplog.text
+
+    @patch("reeln_openai_plugin.plugin.analyze_frame_for_zoom")
+    def test_first_frame_error_aborts_all(
+        self,
+        mock_analyze: MagicMock,
+        plugin_config: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        """Error on first frame stops analysis — no partial zoom path."""
+        from reeln_openai_plugin.client import OpenAIError
+
+        mock_analyze.side_effect = OpenAIError("HTTP 502 Bad Gateway")
+        plugin = OpenAIPlugin({**plugin_config, "smart_zoom_enabled": True})
+        frames = self._make_frames(tmp_path, count=3)
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED,
+            data={"frames": frames},
+        )
+
+        plugin.on_frames_extracted(context)
+
+        # Only called once — first frame fails, analysis stops
+        assert mock_analyze.call_count == 1
+        assert "error" in context.shared["smart_zoom"]
 
     @patch("reeln_openai_plugin.plugin.analyze_frame_for_zoom")
     def test_model_override(

@@ -55,8 +55,11 @@ def _build_prompt_variables(
     rink: str,
     game_date: str,
     game_time: str,
+    level: str,
+    description: str,
+    tournament: str,
 ) -> dict[str, str]:
-    """Extract template variables from team objects."""
+    """Extract template variables from team objects and game info."""
     return {
         "home_team": str(getattr(home, "name", "")),
         "away_team": str(getattr(away, "name", "")),
@@ -66,6 +69,9 @@ def _build_prompt_variables(
         "rink": rink,
         "game_date": game_date,
         "game_time": game_time,
+        "level": level,
+        "description": description,
+        "tournament": tournament,
     }
 
 
@@ -85,6 +91,9 @@ def generate_game_image(
     output_dir: Path,
     model: str,
     renderer_model: str,
+    level: str = "",
+    description: str = "",
+    tournament: str = "",
 ) -> GameImageResult:
     """Generate a game thumbnail image and save it as a 1280x720 PNG.
 
@@ -101,7 +110,9 @@ def generate_game_image(
     if away_logo_path is not None:
         images.append(encode_logo(Path(away_logo_path)))
 
-    variables = _build_prompt_variables(home, away, rink, game_date, game_time)
+    variables = _build_prompt_variables(
+        home, away, rink, game_date, game_time, level, description, tournament,
+    )
     prompt = prompt_registry.render("game_image", variables)
 
     raw_bytes = client.request_image(

@@ -45,6 +45,8 @@ def build_prompt_variables(
         "venue": str(getattr(game_info, "venue", "")),
         "game_time": str(getattr(game_info, "game_time", "")),
         "description": str(getattr(game_info, "description", "")),
+        "level": str(getattr(game_info, "level", "")),
+        "tournament": str(getattr(game_info, "tournament", "")),
     }
 
     if home_profile is not None:
