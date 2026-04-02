@@ -65,7 +65,7 @@ def _build_prompt_variables(
         "away_team": str(getattr(away, "team_name", "")),
         "home_colors": str(getattr(home, "colors", "")),
         "away_colors": str(getattr(away, "colors", "")),
-        "game_level": str(getattr(home, "game_level", "")),
+        "game_level": str(getattr(home, "level", "")),
         "rink": rink,
         "game_date": game_date,
         "game_time": game_time,

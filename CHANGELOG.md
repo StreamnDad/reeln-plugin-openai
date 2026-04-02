@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Fixed
 
 - Use correct `team_name` attribute (instead of `name`) on team profile objects in game image prompt variables and filename slugs — fixes home/away team names rendering as empty strings (issue #6)
+- Use `level` attribute (instead of `game_level`) on team profile objects in game image prompt variables — fixes game level rendering as empty string
+- Read team profile `summary` from `metadata` dict (instead of non-existent `summary` attribute) in livestream prompt variables — fixes home/away profile context always being empty
 
 ## [0.8.1] - 2026-03-27
 

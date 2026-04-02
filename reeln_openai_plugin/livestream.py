@@ -50,9 +50,11 @@ def build_prompt_variables(
     }
 
     if home_profile is not None:
-        variables["home_profile"] = str(getattr(home_profile, "summary", ""))
+        meta = getattr(home_profile, "metadata", None) or {}
+        variables["home_profile"] = str(meta.get("summary", ""))
     if away_profile is not None:
-        variables["away_profile"] = str(getattr(away_profile, "summary", ""))
+        meta = getattr(away_profile, "metadata", None) or {}
+        variables["away_profile"] = str(meta.get("summary", ""))
 
     return variables
 

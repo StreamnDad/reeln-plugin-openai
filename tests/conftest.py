@@ -42,7 +42,7 @@ class FakeGameEvent:
 class FakeTeamProfile:
     """Minimal stand-in for a team profile object."""
 
-    summary: str = "10-5-2 record, 3rd in division"
+    metadata: dict[str, Any] = field(default_factory=lambda: {"summary": "10-5-2 record, 3rd in division"})
 
 
 @dataclass
@@ -53,7 +53,7 @@ class FakeTeamInfo:
     short_name: str = "EGL"
     logo_path: Path | None = None
     colors: str = "Red, White"
-    game_level: str = "Varsity"
+    level: str = "Varsity"
 
 
 @dataclass

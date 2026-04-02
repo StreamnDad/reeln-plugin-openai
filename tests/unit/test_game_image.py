@@ -324,8 +324,8 @@ class TestGenerateGameImage:
     def test_prompt_rendered_with_variables(self, tmp_path: Path) -> None:
         home_logo = _make_logo(tmp_path / "h.png")
         away_logo = _make_logo(tmp_path / "a.png")
-        home = FakeTeamInfo(team_name="Storm", logo_path=home_logo, colors="Blue", game_level="U14")
-        away = FakeTeamInfo(team_name="Thunder", logo_path=away_logo, colors="Gold", game_level="U14")
+        home = FakeTeamInfo(team_name="Storm", logo_path=home_logo, colors="Blue", level="U14")
+        away = FakeTeamInfo(team_name="Thunder", logo_path=away_logo, colors="Gold", level="U14")
 
         client = MagicMock()
         img = Image.new("RGB", (1536, 1024))
