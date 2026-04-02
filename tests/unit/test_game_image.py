@@ -107,8 +107,8 @@ class TestGenerateGameImage:
         home_logo = _make_logo(tmp_path / "home_logo.png")
         away_logo = _make_logo(tmp_path / "away_logo.png")
 
-        home = FakeTeamInfo(name="Storm", short_name="STM", logo_path=home_logo, colors="Blue, White")
-        away = FakeTeamInfo(name="Thunder", short_name="THN", logo_path=away_logo, colors="Gold, Black")
+        home = FakeTeamInfo(team_name="Storm", short_name="STM", logo_path=home_logo, colors="Blue, White")
+        away = FakeTeamInfo(team_name="Thunder", short_name="THN", logo_path=away_logo, colors="Gold, Black")
 
         # Mock client
         client = MagicMock()
@@ -155,8 +155,8 @@ class TestGenerateGameImage:
     def test_creates_output_dir(self, tmp_path: Path) -> None:
         home_logo = _make_logo(tmp_path / "h.png")
         away_logo = _make_logo(tmp_path / "a.png")
-        home = FakeTeamInfo(name="A", logo_path=home_logo)
-        away = FakeTeamInfo(name="B", logo_path=away_logo)
+        home = FakeTeamInfo(team_name="A", logo_path=home_logo)
+        away = FakeTeamInfo(team_name="B", logo_path=away_logo)
 
         client = MagicMock()
         img = Image.new("RGB", (1536, 1024))
@@ -183,9 +183,9 @@ class TestGenerateGameImage:
         assert result.image_path.exists()
 
     def test_missing_logo_raises(self, tmp_path: Path) -> None:
-        home = FakeTeamInfo(name="A", logo_path=tmp_path / "missing.png")
+        home = FakeTeamInfo(team_name="A", logo_path=tmp_path / "missing.png")
         away_logo = _make_logo(tmp_path / "away.png")
-        away = FakeTeamInfo(name="B", logo_path=away_logo)
+        away = FakeTeamInfo(team_name="B", logo_path=away_logo)
 
         client = MagicMock()
 
@@ -206,8 +206,8 @@ class TestGenerateGameImage:
     def test_api_error_propagates(self, tmp_path: Path) -> None:
         home_logo = _make_logo(tmp_path / "h.png")
         away_logo = _make_logo(tmp_path / "a.png")
-        home = FakeTeamInfo(name="A", logo_path=home_logo)
-        away = FakeTeamInfo(name="B", logo_path=away_logo)
+        home = FakeTeamInfo(team_name="A", logo_path=home_logo)
+        away = FakeTeamInfo(team_name="B", logo_path=away_logo)
 
         client = MagicMock()
         client.request_image.side_effect = OpenAIError("API down")
@@ -229,8 +229,8 @@ class TestGenerateGameImage:
     def test_output_filename_format(self, tmp_path: Path) -> None:
         home_logo = _make_logo(tmp_path / "h.png")
         away_logo = _make_logo(tmp_path / "a.png")
-        home = FakeTeamInfo(name="Storm Eagles", short_name="SE", logo_path=home_logo)
-        away = FakeTeamInfo(name="Thunder Hawks", short_name="TH", logo_path=away_logo)
+        home = FakeTeamInfo(team_name="Storm Eagles", short_name="SE", logo_path=home_logo)
+        away = FakeTeamInfo(team_name="Thunder Hawks", short_name="TH", logo_path=away_logo)
 
         client = MagicMock()
         img = Image.new("RGB", (1536, 1024))
@@ -263,8 +263,8 @@ class TestGenerateGameImage:
 
     def test_no_logo_paths(self, tmp_path: Path) -> None:
         """Team objects without logo_path still work — no images sent."""
-        home = FakeTeamInfo(name="A", logo_path=None)
-        away = FakeTeamInfo(name="B", logo_path=None)
+        home = FakeTeamInfo(team_name="A", logo_path=None)
+        away = FakeTeamInfo(team_name="B", logo_path=None)
 
         client = MagicMock()
         img = Image.new("RGB", (1536, 1024))
@@ -293,8 +293,8 @@ class TestGenerateGameImage:
         """Team names or dates with path-traversal chars produce safe filenames."""
         home_logo = _make_logo(tmp_path / "h.png")
         away_logo = _make_logo(tmp_path / "a.png")
-        home = FakeTeamInfo(name="../evil", short_name="../evil", logo_path=home_logo)
-        away = FakeTeamInfo(name="B/bad", short_name="B/bad", logo_path=away_logo)
+        home = FakeTeamInfo(team_name="../evil", short_name="../evil", logo_path=home_logo)
+        away = FakeTeamInfo(team_name="B/bad", short_name="B/bad", logo_path=away_logo)
 
         client = MagicMock()
         img = Image.new("RGB", (1536, 1024))
@@ -324,8 +324,8 @@ class TestGenerateGameImage:
     def test_prompt_rendered_with_variables(self, tmp_path: Path) -> None:
         home_logo = _make_logo(tmp_path / "h.png")
         away_logo = _make_logo(tmp_path / "a.png")
-        home = FakeTeamInfo(name="Storm", logo_path=home_logo, colors="Blue", game_level="U14")
-        away = FakeTeamInfo(name="Thunder", logo_path=away_logo, colors="Gold", game_level="U14")
+        home = FakeTeamInfo(team_name="Storm", logo_path=home_logo, colors="Blue", level="U14")
+        away = FakeTeamInfo(team_name="Thunder", logo_path=away_logo, colors="Gold", level="U14")
 
         client = MagicMock()
         img = Image.new("RGB", (1536, 1024))

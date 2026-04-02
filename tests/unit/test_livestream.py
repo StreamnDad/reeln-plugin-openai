@@ -69,8 +69,8 @@ class TestBuildPromptVariables:
 
     def test_with_profiles(self) -> None:
         info = FakeGameInfo()
-        home = FakeTeamProfile(summary="Home summary")
-        away = FakeTeamProfile(summary="Away summary")
+        home = FakeTeamProfile(metadata={"summary": "Home summary"})
+        away = FakeTeamProfile(metadata={"summary": "Away summary"})
         v = build_prompt_variables(info, home_profile=home, away_profile=away)
         assert v["home_profile"] == "Home summary"
         assert v["away_profile"] == "Away summary"

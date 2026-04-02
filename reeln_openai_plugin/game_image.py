@@ -61,11 +61,11 @@ def _build_prompt_variables(
 ) -> dict[str, str]:
     """Extract template variables from team objects and game info."""
     return {
-        "home_team": str(getattr(home, "name", "")),
-        "away_team": str(getattr(away, "name", "")),
+        "home_team": str(getattr(home, "team_name", "")),
+        "away_team": str(getattr(away, "team_name", "")),
         "home_colors": str(getattr(home, "colors", "")),
         "away_colors": str(getattr(away, "colors", "")),
-        "game_level": str(getattr(home, "game_level", "")),
+        "game_level": str(getattr(home, "level", "")),
         "rink": rink,
         "game_date": game_date,
         "game_time": game_time,
@@ -129,8 +129,8 @@ def generate_game_image(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    home_slug = _slugify(str(getattr(home, "short_name", getattr(home, "name", "home"))))
-    away_slug = _slugify(str(getattr(away, "short_name", getattr(away, "name", "away"))))
+    home_slug = _slugify(str(getattr(home, "short_name", getattr(home, "team_name", "home"))))
+    away_slug = _slugify(str(getattr(away, "short_name", getattr(away, "team_name", "away"))))
     date_slug = _slugify(game_date.replace("/", "-"))
     filename = f"{date_slug}_{home_slug}_vs_{away_slug}.png"
     out_path = output_dir / filename
