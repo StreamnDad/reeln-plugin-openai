@@ -10,7 +10,7 @@ dev-install:
 	uv pip install -e ".[dev]"
 
 install:
-	uv pip install --python ~/.local/share/uv/tools/reeln/bin/python3 -e .
+	uv pip install --python ../reeln-cli/.venv/bin/python -e .
 
 test:
 	$(VENV)/python -m pytest tests/ -n auto --cov=$(PLUGIN_PKG) --cov-branch --cov-fail-under=100 -q
