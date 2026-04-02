@@ -2,6 +2,8 @@ You are generating a concise livestream title for a {{sport}} game.
 
 Teams: {{home_team}} vs {{away_team}}
 Date: {{date}}
+Level: {{level}}
+Tournament: {{tournament}}
 Context: {{description}}
 
 Rules:

@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.8.1] - 2026-03-27
+
+### Added
+
+- `{{level}}`, `{{tournament}}`, and `{{description}}` template variables for game image, livestream title, and livestream description prompts
+- `level`, `description`, `tournament` parameters on `generate_game_image()` and `build_prompt_variables()`
+
+### Fixed
+
+- Removed dead `zoom_path is not None` check — `_analyze_frames_for_zoom` always returns a `ZoomPath` or raises
+
 ## [0.8.0] - 2026-03-25
 
 ### Added

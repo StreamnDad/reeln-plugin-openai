@@ -21,7 +21,7 @@ from reeln_openai_plugin.playlist import generate_playlist_metadata
 from reeln_openai_plugin.prompts import PromptRegistry
 from reeln_openai_plugin.render_metadata import generate_render_metadata
 from reeln_openai_plugin.translate import translate_metadata
-from reeln_openai_plugin.zoom import FALLBACK_CENTER, analyze_frame_for_zoom
+from reeln_openai_plugin.zoom import analyze_frame_for_zoom
 
 log: logging.Logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class OpenAIPlugin:
     """
 
     name: str = "openai"
-    version: str = "0.8.0"
+    version: str = "0.8.1"
     api_version: int = 1
 
     config_schema: PluginConfigSchema = PluginConfigSchema(
@@ -353,6 +353,9 @@ class OpenAIPlugin:
                 renderer_model=str(
                     self._config.get("game_image_renderer_model", "gpt-image-1.5"),
                 ),
+                level=str(getattr(game_info, "level", "")),
+                description=str(getattr(game_info, "description", "")),
+                tournament=str(getattr(game_info, "tournament", "")),
             )
             context.shared["game_image"] = {"image_path": str(image_result.image_path)}
             log.info("%s plugin: generated game image: %s", self.name, image_result.image_path)
@@ -443,9 +446,17 @@ class OpenAIPlugin:
             return
 
         if smart_zoom_enabled:
-            zoom_path = self._analyze_frames_for_zoom(client, frames)
-            if zoom_path is not None:
-                context.shared["smart_zoom"] = {"zoom_path": zoom_path}
+            try:
+                zoom_path = self._analyze_frames_for_zoom(client, frames)
+            except OpenAIError as exc:
+                log.error(
+                    "%s plugin: smart zoom analysis failed after retries: %s",
+                    self.name,
+                    exc,
+                )
+                context.shared["smart_zoom"] = {"error": str(exc)}
+                return
+            context.shared["smart_zoom"] = {"zoom_path": zoom_path}
 
         if frame_desc_enabled:
             self._describe_frames(client, frames, context)
@@ -455,28 +466,23 @@ class OpenAIPlugin:
         client: OpenAIClient,
         frames: ExtractedFrames,
     ) -> ZoomPath | None:
-        """Analyze each frame and return a :class:`ZoomPath`, or ``None`` on total failure."""
+        """Analyze each frame and return a :class:`ZoomPath`.
+
+        Each frame is retried with exponential backoff on transient errors.
+        If any frame fails after all retries, the entire analysis fails
+        (raises ``OpenAIError``) rather than producing a jittery zoom path
+        from fallback coordinates.
+        """
         model = str(self._config.get("smart_zoom_model", "gpt-4.1"))
         points: list[ZoomPoint] = []
-        success_count = 0
 
         for frame_path, timestamp in zip(frames.frame_paths, frames.timestamps, strict=True):
-            try:
-                center_x, center_y = analyze_frame_for_zoom(
-                    client=client,
-                    prompt_registry=self._prompt_registry,
-                    frame_path=frame_path,
-                    model=model,
-                )
-                success_count += 1
-            except OpenAIError as exc:
-                log.warning(
-                    "%s plugin: frame %s analysis failed, using fallback: %s",
-                    self.name,
-                    frame_path,
-                    exc,
-                )
-                center_x, center_y = FALLBACK_CENTER
+            center_x, center_y = analyze_frame_for_zoom(
+                client=client,
+                prompt_registry=self._prompt_registry,
+                frame_path=frame_path,
+                model=model,
+            )
 
             points.append(
                 ZoomPoint(
@@ -486,18 +492,10 @@ class OpenAIPlugin:
                 ),
             )
 
-        if success_count == 0:
-            log.warning(
-                "%s plugin: all %d frame analyses failed, not writing zoom path",
-                self.name,
-                len(frames.frame_paths),
-            )
-            return None
-
         log.info(
             "%s plugin: smart zoom analysis complete — %d/%d frames succeeded",
             self.name,
-            success_count,
+            len(frames.frame_paths),
             len(frames.frame_paths),
         )
 

@@ -3,6 +3,8 @@ You are writing a short livestream description for a {{sport}} game.
 Teams: {{home_team}} vs {{away_team}}
 Date: {{date}}
 Venue: {{venue}}
+Level: {{level}}
+Tournament: {{tournament}}
 Context: {{description}}
 
 Rules:
