@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.8.2] - 2026-04-02
+
+### Fixed
+
+- Use correct `team_name` attribute (instead of `name`) on team profile objects in game image prompt variables and filename slugs — fixes home/away team names rendering as empty strings (issue #6)
+
 ## [0.8.1] - 2026-03-27
 
 ### Added

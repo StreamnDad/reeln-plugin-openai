@@ -49,7 +49,7 @@ class FakeTeamProfile:
 class FakeTeamInfo:
     """Minimal stand-in for a team object with logo and colors."""
 
-    name: str = "Eagles"
+    team_name: str = "Eagles"
     short_name: str = "EGL"
     logo_path: Path | None = None
     colors: str = "Red, White"

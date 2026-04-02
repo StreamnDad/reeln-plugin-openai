@@ -26,7 +26,7 @@ class TestPluginAttributes:
 
     def test_version(self) -> None:
         plugin = OpenAIPlugin()
-        assert plugin.version == "0.8.1"
+        assert plugin.version == "0.8.2"
 
     def test_api_version(self) -> None:
         plugin = OpenAIPlugin()
@@ -860,8 +860,8 @@ class TestOnGameInitGameImage:
 
         mock_livestream.return_value = LivestreamMetadata(title="T", description="D")
 
-        home_info = FakeTeamInfo(name="A", logo_path=tmp_path / "h.png")
-        away_info = FakeTeamInfo(name="B", logo_path=tmp_path / "a.png")
+        home_info = FakeTeamInfo(team_name="A", logo_path=tmp_path / "h.png")
+        away_info = FakeTeamInfo(team_name="B", logo_path=tmp_path / "a.png")
 
         config = {
             **plugin_config,
@@ -914,8 +914,8 @@ class TestOnGameInitGameImage:
         img_path = tmp_path / "game.png"
         mock_game_image.return_value = GameImageResult(image_path=img_path)
 
-        home_info = FakeTeamInfo(name="Storm", logo_path=tmp_path / "h.png")
-        away_info = FakeTeamInfo(name="Thunder", logo_path=tmp_path / "a.png")
+        home_info = FakeTeamInfo(team_name="Storm", logo_path=tmp_path / "h.png")
+        away_info = FakeTeamInfo(team_name="Thunder", logo_path=tmp_path / "a.png")
 
         config = {
             **plugin_config,
@@ -948,8 +948,8 @@ class TestOnGameInitGameImage:
         mock_livestream.return_value = LivestreamMetadata(title="T", description="D")
         mock_game_image.return_value = GameImageResult(image_path=tmp_path / "g.png")
 
-        home_info = FakeTeamInfo(name="A", logo_path=tmp_path / "h.png")
-        away_info = FakeTeamInfo(name="B", logo_path=tmp_path / "a.png")
+        home_info = FakeTeamInfo(team_name="A", logo_path=tmp_path / "h.png")
+        away_info = FakeTeamInfo(team_name="B", logo_path=tmp_path / "a.png")
 
         config = {
             **plugin_config,
@@ -986,8 +986,8 @@ class TestOnGameInitGameImage:
         mock_livestream.return_value = LivestreamMetadata(title="T", description="D")
         mock_game_image.side_effect = OpenAIError("Image gen failed")
 
-        home_info = FakeTeamInfo(name="A", logo_path=tmp_path / "h.png")
-        away_info = FakeTeamInfo(name="B", logo_path=tmp_path / "a.png")
+        home_info = FakeTeamInfo(team_name="A", logo_path=tmp_path / "h.png")
+        away_info = FakeTeamInfo(team_name="B", logo_path=tmp_path / "a.png")
 
         config = {
             **plugin_config,
@@ -1047,8 +1047,8 @@ class TestOnGameInitGameImage:
         mock_gen.return_value = LivestreamMetadata(title="T", description="D")
 
         # Team profiles without logo_path
-        home_info = FakeTeamInfo(name="A", logo_path=None)
-        away_info = FakeTeamInfo(name="B", logo_path=None)
+        home_info = FakeTeamInfo(team_name="A", logo_path=None)
+        away_info = FakeTeamInfo(team_name="B", logo_path=None)
 
         config = {
             **plugin_config,
@@ -1079,8 +1079,8 @@ class TestOnGameInitGameImage:
 
         mock_gen.return_value = LivestreamMetadata(title="T", description="D")
 
-        home_info = FakeTeamInfo(name="A", logo_path=tmp_path / "h.png")
-        away_info = FakeTeamInfo(name="B", logo_path=tmp_path / "a.png")
+        home_info = FakeTeamInfo(team_name="A", logo_path=tmp_path / "h.png")
+        away_info = FakeTeamInfo(team_name="B", logo_path=tmp_path / "a.png")
 
         config = {
             **plugin_config,
