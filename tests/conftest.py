@@ -57,6 +57,23 @@ class FakeTeamInfo:
 
 
 @dataclass
+class FakeQueueItem:
+    """Minimal stand-in for ``reeln.models.queue.QueueItem``."""
+
+    id: str = "abc123def456"
+    output: str = "/games/test/shorts/clip_short.mp4"
+    game_dir: str = "/games/test"
+    status: str = "rendered"
+    queued_at: str = "2026-04-06T18:00:00Z"
+    player: str = ""
+    assists: str = ""
+    event_type: str = "goal"
+    level: str = "11u"
+    title: str = ""
+    description: str = ""
+
+
+@dataclass
 class FakeExtractedFrames:
     """Minimal stand-in for ``reeln.models.zoom.ExtractedFrames``."""
 

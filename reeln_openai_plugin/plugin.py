@@ -5,9 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import ssl
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
+from reeln.models.auth import AuthCheckResult, AuthStatus
 from reeln.models.plugin_schema import ConfigField, PluginConfigSchema
 from reeln.models.zoom import ExtractedFrames, ZoomPath, ZoomPoint
 from reeln.plugins.hooks import Hook, HookContext
@@ -35,7 +39,7 @@ class OpenAIPlugin:
     """
 
     name: str = "openai"
-    version: str = "0.8.2"
+    version: str = "0.9.0"
     api_version: int = 1
 
     config_schema: PluginConfigSchema = PluginConfigSchema(
@@ -180,6 +184,7 @@ class OpenAIPlugin:
     def register(self, registry: HookRegistry) -> None:
         """Register hook handlers with the reeln plugin registry."""
         registry.register(Hook.ON_GAME_INIT, self.on_game_init)
+        registry.register(Hook.ON_QUEUE, self.on_queue)
         registry.register(Hook.POST_RENDER, self.on_post_render)
         registry.register(Hook.ON_FRAMES_EXTRACTED, self.on_frames_extracted)
 
@@ -361,6 +366,80 @@ class OpenAIPlugin:
             log.info("%s plugin: generated game image: %s", self.name, image_result.image_path)
         except OpenAIError as exc:
             log.warning("%s plugin: game image generation failed: %s", self.name, exc)
+
+    def on_queue(self, context: HookContext) -> None:
+        """Handle ``ON_QUEUE`` — enrich title and description for queued renders.
+
+        Runs after a render is added to the queue (via ``--queue``), generating
+        an AI title and description that the user can review before publishing.
+        Updates the queue item in-place so the enriched metadata is visible in
+        the dock's Review & Publish panel.
+        """
+        if not self._config.get("render_metadata_enabled", False):
+            return
+
+        queue_item = context.data.get("queue_item")
+        if queue_item is None:
+            return
+
+        game_info = self._game_info or context.data.get("game_info")
+        if game_info is None:
+            log.debug("%s plugin: no game_info available, skipping queue metadata", self.name)
+            return
+
+        try:
+            client = self._get_client()
+        except OpenAIError as exc:
+            log.warning("%s plugin: client setup failed: %s", self.name, exc)
+            return
+
+        clip_name = Path(queue_item.output).stem if queue_item.output else ""
+
+        frame_summary = ""
+        if self._frame_descriptions is not None:
+            frame_summary = self._frame_descriptions.summary
+            self._frame_descriptions = None
+
+        player_name = getattr(queue_item, "player", "")
+        assists_str = getattr(queue_item, "assists", "")
+        event_type = getattr(queue_item, "event_type", "")
+        level = getattr(queue_item, "level", "") or getattr(game_info, "level", "")
+
+        try:
+            metadata = generate_render_metadata(
+                client,
+                self._prompt_registry,
+                game_info,
+                clip_name=clip_name,
+                frame_summary=frame_summary,
+                player=player_name,
+                assists=assists_str,
+                event_type=event_type,
+                level=level,
+            )
+        except OpenAIError as exc:
+            log.warning("%s plugin: queue metadata generation failed: %s", self.name, exc)
+            return
+
+        # Persist enriched metadata back to the queue item on disk
+        try:
+            from reeln.core.queue import update_queue_item
+
+            update_queue_item(
+                Path(queue_item.game_dir),
+                queue_item.id,
+                title=metadata.title,
+                description=metadata.description,
+            )
+        except Exception as exc:
+            log.warning("%s plugin: failed to update queue item: %s", self.name, exc)
+            return
+
+        context.shared["render_metadata"] = {
+            "title": metadata.title,
+            "description": metadata.description,
+        }
+        log.info("%s plugin: enriched queue item %s: %s", self.name, queue_item.id, metadata.title)
 
     def on_post_render(self, context: HookContext) -> None:
         """Handle ``POST_RENDER`` — generate short title and description."""
@@ -582,6 +661,76 @@ class OpenAIPlugin:
         raise OpenAIError(
             "No API key: set api_key_file in config or OPENAI_API_KEY env var",
         )
+
+    # ------------------------------------------------------------------
+    # Authenticator capability
+    # ------------------------------------------------------------------
+
+    def auth_check(self) -> list[AuthCheckResult]:
+        """Validate the OpenAI API key by listing models."""
+        try:
+            api_key = self._resolve_api_key()
+        except OpenAIError as exc:
+            return [
+                AuthCheckResult(
+                    service="OpenAI API",
+                    status=AuthStatus.NOT_CONFIGURED,
+                    message=str(exc),
+                    hint="Set api_key_file in config or OPENAI_API_KEY env var",
+                )
+            ]
+
+        redacted = api_key[:7] + "..." if len(api_key) > 7 else "***"
+
+        try:
+            req = urllib.request.Request(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                method="GET",
+            )
+            ctx = ssl.create_default_context()
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
+                resp.read()
+        except urllib.error.HTTPError as exc:
+            return [
+                AuthCheckResult(
+                    service="OpenAI API",
+                    status=AuthStatus.FAIL,
+                    message=f"API key validation failed: HTTP {exc.code}",
+                    identity=redacted,
+                    hint="Check that your API key is valid and has not been revoked",
+                )
+            ]
+        except Exception as exc:
+            return [
+                AuthCheckResult(
+                    service="OpenAI API",
+                    status=AuthStatus.WARN,
+                    message=f"Could not validate API key: {exc}",
+                    identity=redacted,
+                    hint="Network error — key may still be valid",
+                )
+            ]
+
+        return [
+            AuthCheckResult(
+                service="OpenAI API",
+                status=AuthStatus.OK,
+                message="Authenticated",
+                identity=redacted,
+            )
+        ]
+
+    def auth_refresh(self) -> list[AuthCheckResult]:
+        """API keys cannot be refreshed automatically."""
+        return [
+            AuthCheckResult(
+                service="OpenAI API",
+                status=AuthStatus.FAIL,
+                message="API keys cannot be refreshed automatically",
+                hint="Generate a new key at https://platform.openai.com/api-keys",
+            )
+        ]
 
     def _parse_json_config(self, key: str) -> Any:
         """Parse a JSON string config value, defaulting to ``{}``."""

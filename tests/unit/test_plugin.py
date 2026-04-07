@@ -11,8 +11,9 @@ import pytest
 from reeln.plugins.hooks import Hook, HookContext
 from reeln.plugins.registry import HookRegistry
 
+from reeln_openai_plugin.client import OpenAIError
 from reeln_openai_plugin.plugin import OpenAIPlugin
-from tests.conftest import FakeExtractedFrames, FakeGameInfo, FakeTeamInfo
+from tests.conftest import FakeExtractedFrames, FakeGameInfo, FakeQueueItem, FakeTeamInfo
 
 # ------------------------------------------------------------------
 # Attributes
@@ -524,6 +525,224 @@ class TestOnGameInitPlaylist:
 
         assert context.shared["livestream_metadata"]["title"] == "Live!"
         assert context.shared["playlist_metadata"]["title"] == "Highlights!"
+
+
+# ------------------------------------------------------------------
+# on_queue — metadata enrichment for queued renders
+# ------------------------------------------------------------------
+
+
+class TestOnQueue:
+    def test_disabled_skips(self, plugin_config: dict[str, Any]) -> None:
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": False})
+        queue_item = FakeQueueItem()
+        context = HookContext(
+            hook=Hook.ON_QUEUE,
+            data={"queue_item": queue_item, "game_info": FakeGameInfo()},
+        )
+
+        plugin.on_queue(context)
+
+        assert "render_metadata" not in context.shared
+
+    def test_no_queue_item_skips(self, plugin_config: dict[str, Any]) -> None:
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
+        context = HookContext(hook=Hook.ON_QUEUE, data={})
+
+        plugin.on_queue(context)
+
+        assert "render_metadata" not in context.shared
+
+    def test_no_game_info_skips(self, plugin_config: dict[str, Any]) -> None:
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
+        queue_item = FakeQueueItem()
+        context = HookContext(hook=Hook.ON_QUEUE, data={"queue_item": queue_item})
+
+        plugin.on_queue(context)
+
+        assert "render_metadata" not in context.shared
+
+    @patch("reeln.core.queue.update_queue_item")
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
+    @patch("reeln_openai_plugin.plugin.OpenAIPlugin._get_client")
+    def test_generates_and_persists_metadata(
+        self,
+        mock_client: MagicMock,
+        mock_gen: MagicMock,
+        mock_update: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        from reeln_openai_plugin.render_metadata import RenderMetadata
+
+        mock_gen.return_value = RenderMetadata(title="AI Title", description="AI Desc")
+        mock_update.return_value = MagicMock()
+
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
+        plugin._game_info = FakeGameInfo()
+        queue_item = FakeQueueItem(player="#48 Ben", assists="#3 Charlie")
+        context = HookContext(
+            hook=Hook.ON_QUEUE,
+            data={"queue_item": queue_item, "game_info": FakeGameInfo()},
+        )
+
+        plugin.on_queue(context)
+
+        assert context.shared["render_metadata"]["title"] == "AI Title"
+        assert context.shared["render_metadata"]["description"] == "AI Desc"
+
+        mock_update.assert_called_once()
+        call_args = mock_update.call_args
+        assert str(call_args[0][0]) == "/games/test"
+        assert call_args[0][1] == "abc123def456"
+        assert call_args[1]["title"] == "AI Title"
+        assert call_args[1]["description"] == "AI Desc"
+
+    @patch("reeln.core.queue.update_queue_item")
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
+    @patch("reeln_openai_plugin.plugin.OpenAIPlugin._get_client")
+    def test_passes_player_context(
+        self,
+        mock_client: MagicMock,
+        mock_gen: MagicMock,
+        mock_update: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        from reeln_openai_plugin.render_metadata import RenderMetadata
+
+        mock_gen.return_value = RenderMetadata(title="T", description="D")
+        mock_update.return_value = MagicMock()
+
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
+        plugin._game_info = FakeGameInfo()
+        queue_item = FakeQueueItem(
+            player="#48 Benjamin Remitz",
+            assists="#3 Charles Pillsbury",
+            event_type="goal",
+            level="11u",
+        )
+        context = HookContext(
+            hook=Hook.ON_QUEUE,
+            data={"queue_item": queue_item, "game_info": FakeGameInfo()},
+        )
+
+        plugin.on_queue(context)
+
+        call_kwargs = mock_gen.call_args[1]
+        assert call_kwargs["player"] == "#48 Benjamin Remitz"
+        assert call_kwargs["assists"] == "#3 Charles Pillsbury"
+        assert call_kwargs["event_type"] == "goal"
+        assert call_kwargs["level"] == "11u"
+        assert call_kwargs["clip_name"] == "clip_short"
+
+    @patch("reeln_openai_plugin.plugin.OpenAIPlugin._get_client")
+    def test_client_failure_skips(
+        self,
+        mock_client: MagicMock,
+        plugin_config: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_client.side_effect = OpenAIError("bad key")
+
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
+        plugin._game_info = FakeGameInfo()
+        queue_item = FakeQueueItem()
+        context = HookContext(
+            hook=Hook.ON_QUEUE,
+            data={"queue_item": queue_item, "game_info": FakeGameInfo()},
+        )
+
+        with caplog.at_level(logging.WARNING):
+            plugin.on_queue(context)
+
+        assert "client setup failed" in caplog.text
+        assert "render_metadata" not in context.shared
+
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
+    @patch("reeln_openai_plugin.plugin.OpenAIPlugin._get_client")
+    def test_generation_failure_skips(
+        self,
+        mock_client: MagicMock,
+        mock_gen: MagicMock,
+        plugin_config: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_gen.side_effect = OpenAIError("API error")
+
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
+        plugin._game_info = FakeGameInfo()
+        queue_item = FakeQueueItem()
+        context = HookContext(
+            hook=Hook.ON_QUEUE,
+            data={"queue_item": queue_item, "game_info": FakeGameInfo()},
+        )
+
+        with caplog.at_level(logging.WARNING):
+            plugin.on_queue(context)
+
+        assert "queue metadata generation failed" in caplog.text
+        assert "render_metadata" not in context.shared
+
+    @patch("reeln.core.queue.update_queue_item", side_effect=Exception("disk full"))
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
+    @patch("reeln_openai_plugin.plugin.OpenAIPlugin._get_client")
+    def test_update_failure_skips(
+        self,
+        mock_client: MagicMock,
+        mock_gen: MagicMock,
+        mock_update: MagicMock,
+        plugin_config: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from reeln_openai_plugin.render_metadata import RenderMetadata
+
+        mock_gen.return_value = RenderMetadata(title="T", description="D")
+
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
+        plugin._game_info = FakeGameInfo()
+        queue_item = FakeQueueItem()
+        context = HookContext(
+            hook=Hook.ON_QUEUE,
+            data={"queue_item": queue_item, "game_info": FakeGameInfo()},
+        )
+
+        with caplog.at_level(logging.WARNING):
+            plugin.on_queue(context)
+
+        assert "failed to update queue item" in caplog.text
+        assert "render_metadata" not in context.shared
+
+    @patch("reeln.core.queue.update_queue_item")
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
+    @patch("reeln_openai_plugin.plugin.OpenAIPlugin._get_client")
+    def test_frame_descriptions_passed_and_cleared(
+        self,
+        mock_client: MagicMock,
+        mock_gen: MagicMock,
+        mock_update: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        from reeln_openai_plugin.frames import FrameDescriptions
+        from reeln_openai_plugin.render_metadata import RenderMetadata
+
+        mock_gen.return_value = RenderMetadata(title="T", description="D")
+        mock_update.return_value = MagicMock()
+
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
+        plugin._game_info = FakeGameInfo()
+        plugin._frame_descriptions = FrameDescriptions(
+            descriptions=("wrist shot", "goal"), summary="Quick wrist shot goal"
+        )
+        queue_item = FakeQueueItem()
+        context = HookContext(
+            hook=Hook.ON_QUEUE,
+            data={"queue_item": queue_item, "game_info": FakeGameInfo()},
+        )
+
+        plugin.on_queue(context)
+
+        call_kwargs = mock_gen.call_args[1]
+        assert call_kwargs["frame_summary"] == "Quick wrist shot goal"
+        assert plugin._frame_descriptions is None
 
 
 # ------------------------------------------------------------------
@@ -1593,3 +1812,201 @@ class TestIntegrationWithRegistry:
         registry.emit(Hook.ON_GAME_INIT, context)
 
         assert context.shared["livestream_metadata"]["title"] == "Live!"
+
+
+# ------------------------------------------------------------------
+# auth_check
+# ------------------------------------------------------------------
+
+
+class TestAuthCheckNotConfigured:
+    @patch.object(OpenAIPlugin, "_resolve_api_key")
+    def test_no_api_key_returns_not_configured(
+        self,
+        mock_resolve: MagicMock,
+    ) -> None:
+        from reeln_openai_plugin.client import OpenAIError
+
+        mock_resolve.side_effect = OpenAIError("No API key: set api_key_file in config or OPENAI_API_KEY env var")
+        plugin = OpenAIPlugin()
+        results = plugin.auth_check()
+        assert len(results) == 1
+        assert results[0].service == "OpenAI API"
+        assert results[0].status.value == "not_configured"
+        assert "No API key" in results[0].message
+        assert "api_key_file" in results[0].hint
+
+    @patch.object(OpenAIPlugin, "_resolve_api_key")
+    def test_not_configured_hint_mentions_env_var(
+        self,
+        mock_resolve: MagicMock,
+    ) -> None:
+        from reeln_openai_plugin.client import OpenAIError
+
+        mock_resolve.side_effect = OpenAIError("missing key")
+        plugin = OpenAIPlugin()
+        results = plugin.auth_check()
+        assert "OPENAI_API_KEY" in results[0].hint
+
+
+class TestAuthCheckHttp401:
+    @patch("reeln_openai_plugin.plugin.urllib.request.urlopen")
+    @patch.object(OpenAIPlugin, "_resolve_api_key")
+    def test_401_returns_fail(
+        self,
+        mock_resolve: MagicMock,
+        mock_urlopen: MagicMock,
+    ) -> None:
+        import urllib.error
+
+        mock_resolve.return_value = "sk-test1234567890"
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="https://api.openai.com/v1/models",
+            code=401,
+            msg="Unauthorized",
+            hdrs=None,  # type: ignore[arg-type]
+            fp=None,
+        )
+        plugin = OpenAIPlugin()
+        results = plugin.auth_check()
+        assert len(results) == 1
+        assert results[0].service == "OpenAI API"
+        assert results[0].status.value == "fail"
+        assert "HTTP 401" in results[0].message
+        assert results[0].identity == "sk-test..."
+        assert "revoked" in results[0].hint
+
+    @patch("reeln_openai_plugin.plugin.urllib.request.urlopen")
+    @patch.object(OpenAIPlugin, "_resolve_api_key")
+    def test_403_returns_fail(
+        self,
+        mock_resolve: MagicMock,
+        mock_urlopen: MagicMock,
+    ) -> None:
+        import urllib.error
+
+        mock_resolve.return_value = "sk-test1234567890"
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="https://api.openai.com/v1/models",
+            code=403,
+            msg="Forbidden",
+            hdrs=None,  # type: ignore[arg-type]
+            fp=None,
+        )
+        plugin = OpenAIPlugin()
+        results = plugin.auth_check()
+        assert results[0].status.value == "fail"
+        assert "HTTP 403" in results[0].message
+
+
+class TestAuthCheckNetworkError:
+    @patch("reeln_openai_plugin.plugin.urllib.request.urlopen")
+    @patch.object(OpenAIPlugin, "_resolve_api_key")
+    def test_url_error_returns_warn(
+        self,
+        mock_resolve: MagicMock,
+        mock_urlopen: MagicMock,
+    ) -> None:
+        import urllib.error
+
+        mock_resolve.return_value = "sk-test1234567890"
+        mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
+        plugin = OpenAIPlugin()
+        results = plugin.auth_check()
+        assert len(results) == 1
+        assert results[0].service == "OpenAI API"
+        assert results[0].status.value == "warn"
+        assert "Could not validate" in results[0].message
+        assert results[0].identity == "sk-test..."
+        assert "Network error" in results[0].hint
+
+    @patch("reeln_openai_plugin.plugin.urllib.request.urlopen")
+    @patch.object(OpenAIPlugin, "_resolve_api_key")
+    def test_timeout_returns_warn(
+        self,
+        mock_resolve: MagicMock,
+        mock_urlopen: MagicMock,
+    ) -> None:
+        mock_resolve.return_value = "sk-test1234567890"
+        mock_urlopen.side_effect = TimeoutError("timed out")
+        plugin = OpenAIPlugin()
+        results = plugin.auth_check()
+        assert results[0].status.value == "warn"
+        assert "key may still be valid" in results[0].hint
+
+
+class TestAuthCheckSuccess:
+    @patch("reeln_openai_plugin.plugin.urllib.request.urlopen")
+    @patch.object(OpenAIPlugin, "_resolve_api_key")
+    def test_200_returns_ok(
+        self,
+        mock_resolve: MagicMock,
+        mock_urlopen: MagicMock,
+    ) -> None:
+        mock_resolve.return_value = "sk-proj-abcdefg1234567"
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b'{"data": []}'
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        plugin = OpenAIPlugin()
+        results = plugin.auth_check()
+        assert len(results) == 1
+        assert results[0].service == "OpenAI API"
+        assert results[0].status.value == "ok"
+        assert results[0].message == "Authenticated"
+        assert results[0].identity == "sk-proj..."
+
+    @patch("reeln_openai_plugin.plugin.urllib.request.urlopen")
+    @patch.object(OpenAIPlugin, "_resolve_api_key")
+    def test_redacted_key_shows_first_7_chars(
+        self,
+        mock_resolve: MagicMock,
+        mock_urlopen: MagicMock,
+    ) -> None:
+        mock_resolve.return_value = "sk-live-XXXXXXXXXXX"
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b'{"data": []}'
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        plugin = OpenAIPlugin()
+        results = plugin.auth_check()
+        assert results[0].identity == "sk-live..."
+
+    @patch("reeln_openai_plugin.plugin.urllib.request.urlopen")
+    @patch.object(OpenAIPlugin, "_resolve_api_key")
+    def test_short_key_redacts_fully(
+        self,
+        mock_resolve: MagicMock,
+        mock_urlopen: MagicMock,
+    ) -> None:
+        mock_resolve.return_value = "short"
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b'{"data": []}'
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        plugin = OpenAIPlugin()
+        results = plugin.auth_check()
+        assert results[0].identity == "***"
+
+
+# ------------------------------------------------------------------
+# auth_refresh
+# ------------------------------------------------------------------
+
+
+class TestAuthRefresh:
+    def test_always_returns_fail(self) -> None:
+        plugin = OpenAIPlugin()
+        results = plugin.auth_refresh()
+        assert len(results) == 1
+        assert results[0].service == "OpenAI API"
+        assert results[0].status.value == "fail"
+        assert "cannot be refreshed" in results[0].message
+
+    def test_hint_mentions_platform_url(self) -> None:
+        plugin = OpenAIPlugin()
+        results = plugin.auth_refresh()
+        assert "platform.openai.com" in results[0].hint
