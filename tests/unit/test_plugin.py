@@ -11,6 +11,7 @@ import pytest
 from reeln.plugins.hooks import Hook, HookContext
 from reeln.plugins.registry import HookRegistry
 
+from reeln_openai_plugin import __version__
 from reeln_openai_plugin.client import OpenAIError
 from reeln_openai_plugin.plugin import OpenAIPlugin
 from tests.conftest import FakeExtractedFrames, FakeGameInfo, FakeQueueItem, FakeTeamInfo
@@ -27,7 +28,7 @@ class TestPluginAttributes:
 
     def test_version(self) -> None:
         plugin = OpenAIPlugin()
-        assert plugin.version == "0.8.2"
+        assert plugin.version == __version__
 
     def test_api_version(self) -> None:
         plugin = OpenAIPlugin()
