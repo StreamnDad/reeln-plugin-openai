@@ -30,6 +30,53 @@ from reeln_openai_plugin.zoom import analyze_frame_for_zoom
 log: logging.Logger = logging.getLogger(__name__)
 
 
+def _resolve_scoring_opposing(
+    game_event: object | None,
+    game_info: object | None,
+) -> tuple[str, str]:
+    """Determine (scoring_team_name, opposing_team_name) from an event.
+
+    Resolution priority (highest wins):
+
+    1. ``game_event.metadata["team"]`` — explicit dock tag of ``"home"``
+       or ``"away"``. This is the canonical dock tagging convention.
+    2. ``game_event.event_type`` prefix — ``home_*``/``away_*``.
+       Legacy CLI convention.
+    3. Empty strings when neither is available — the LLM prompt will
+       fall back to "infer from context".
+
+    Returns a tuple of (scoring_team, opposing_team) as human-readable
+    team names, sourced from ``game_info.home_team`` / ``away_team``.
+    """
+    if game_info is None:
+        return ("", "")
+
+    home_team = str(getattr(game_info, "home_team", "") or "")
+    away_team = str(getattr(game_info, "away_team", "") or "")
+
+    # 1. metadata["team"] wins
+    if game_event is not None:
+        metadata = getattr(game_event, "metadata", None) or {}
+        raw_hint = metadata.get("team") if isinstance(metadata, dict) else None
+        if isinstance(raw_hint, str):
+            hint = raw_hint.lower()
+            if hint == "away":
+                return (away_team, home_team)
+            if hint == "home":
+                return (home_team, away_team)
+
+    # 2. event_type prefix
+    if game_event is not None:
+        event_type = str(getattr(game_event, "event_type", "") or "").lower()
+        if event_type.startswith("away_"):
+            return (away_team, home_team)
+        if event_type.startswith("home_"):
+            return (home_team, away_team)
+
+    # 3. Unknown — return empty so the LLM infers from context.
+    return ("", "")
+
+
 class OpenAIPlugin:
     """Plugin that provides OpenAI LLM integration for reeln-cli.
 
@@ -203,6 +250,7 @@ class OpenAIPlugin:
         home_profile = context.data.get("home_profile")
         away_profile = context.data.get("away_profile")
         user_thumbnail = getattr(game_info, "thumbnail", "")
+        image_only = context.data.get("regenerate_image_only", False)
 
         try:
             client = self._get_client()
@@ -210,13 +258,14 @@ class OpenAIPlugin:
             log.warning("%s plugin: client setup failed: %s", self.name, exc)
             return
 
-        # Generate livestream metadata (description is passed as LLM context)
-        self._generate_livestream_metadata(client, game_info, context, home_profile, away_profile)
+        if not image_only:
+            # Generate livestream metadata (description is passed as LLM context)
+            self._generate_livestream_metadata(client, game_info, context, home_profile, away_profile)
 
-        # Generate playlist metadata (only if livestream metadata was generated)
-        livestream_meta = context.shared.get("livestream_metadata")
-        if self._config.get("playlist_enabled", False) and livestream_meta:
-            self._generate_playlist_metadata(client, game_info, context, livestream_meta["title"])
+            # Generate playlist metadata (only if livestream metadata was generated)
+            livestream_meta = context.shared.get("livestream_metadata")
+            if self._config.get("playlist_enabled", False) and livestream_meta:
+                self._generate_playlist_metadata(client, game_info, context, livestream_meta["title"])
 
         # Generate game image (skip if user provided a thumbnail)
         if self._config.get("game_image_enabled", False):
@@ -405,6 +454,18 @@ class OpenAIPlugin:
         event_type = getattr(queue_item, "event_type", "")
         level = getattr(queue_item, "level", "") or getattr(game_info, "level", "")
 
+        # Resolve the scoring team from the GameEvent's metadata so the
+        # LLM prompt can attribute the play correctly. Without this, GPT
+        # defaults to naming the home team as the scoring team because
+        # the prompt has no other signal about which side the player is
+        # on — this reliably generates wrong descriptions for away-team
+        # plays (e.g. "Cozine scores for Machine Orange" when Cozine is
+        # on Blades Maroon).
+        game_event = context.data.get("game_event")
+        scoring_team, opposing_team = _resolve_scoring_opposing(
+            game_event, game_info
+        )
+
         try:
             metadata = generate_render_metadata(
                 client,
@@ -416,6 +477,8 @@ class OpenAIPlugin:
                 assists=assists_str,
                 event_type=event_type,
                 level=level,
+                scoring_team=scoring_team,
+                opposing_team=opposing_team,
             )
         except OpenAIError as exc:
             log.warning("%s plugin: queue metadata generation failed: %s", self.name, exc)
@@ -476,6 +539,9 @@ class OpenAIPlugin:
         game_event = context.data.get("game_event")
         event_type = getattr(game_event, "event_type", "") if game_event else ""
         level = getattr(game_info, "level", "")
+        scoring_team, opposing_team = _resolve_scoring_opposing(
+            game_event, game_info
+        )
 
         try:
             metadata = generate_render_metadata(
@@ -488,6 +554,8 @@ class OpenAIPlugin:
                 assists=assists_str,
                 event_type=event_type,
                 level=level,
+                scoring_team=scoring_team,
+                opposing_team=opposing_team,
             )
         except OpenAIError as exc:
             log.warning("%s plugin: render metadata generation failed: %s", self.name, exc)

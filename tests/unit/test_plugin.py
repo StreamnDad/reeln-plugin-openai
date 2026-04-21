@@ -13,8 +13,14 @@ from reeln.plugins.registry import HookRegistry
 
 from reeln_openai_plugin import __version__
 from reeln_openai_plugin.client import OpenAIError
-from reeln_openai_plugin.plugin import OpenAIPlugin
-from tests.conftest import FakeExtractedFrames, FakeGameInfo, FakeQueueItem, FakeTeamInfo
+from reeln_openai_plugin.plugin import OpenAIPlugin, _resolve_scoring_opposing
+from tests.conftest import (
+    FakeExtractedFrames,
+    FakeGameEvent,
+    FakeGameInfo,
+    FakeQueueItem,
+    FakeTeamInfo,
+)
 
 # ------------------------------------------------------------------
 # Attributes
@@ -2011,3 +2017,238 @@ class TestAuthRefresh:
         plugin = OpenAIPlugin()
         results = plugin.auth_refresh()
         assert "platform.openai.com" in results[0].hint
+
+
+# ------------------------------------------------------------------
+# _resolve_scoring_opposing — team hint resolution helper
+# ------------------------------------------------------------------
+
+
+class TestResolveScoringOpposing:
+    """Covers the helper that decides which team scored, used to prompt
+    the LLM with the correct scoring-team attribution.
+
+    This was added to fix a bug where GPT would generate descriptions
+    like "Cozine scores for Machine Orange" when Cozine is actually on
+    Blades Maroon — because the prompt had no signal about which side
+    the player was on.
+    """
+
+    def test_metadata_team_away_wins(self) -> None:
+        info = FakeGameInfo(home_team="Machine Orange", away_team="Blades Maroon")
+        event = FakeGameEvent(event_type="goal", metadata={"team": "away"})
+        scoring, opposing = _resolve_scoring_opposing(event, info)
+        assert scoring == "Blades Maroon"
+        assert opposing == "Machine Orange"
+
+    def test_metadata_team_home_wins(self) -> None:
+        info = FakeGameInfo(home_team="Machine Orange", away_team="Blades Maroon")
+        event = FakeGameEvent(event_type="goal", metadata={"team": "home"})
+        scoring, opposing = _resolve_scoring_opposing(event, info)
+        assert scoring == "Machine Orange"
+        assert opposing == "Blades Maroon"
+
+    def test_metadata_team_is_case_insensitive(self) -> None:
+        info = FakeGameInfo(home_team="Machine Orange", away_team="Blades Maroon")
+        event = FakeGameEvent(event_type="goal", metadata={"team": "AWAY"})
+        scoring, opposing = _resolve_scoring_opposing(event, info)
+        assert scoring == "Blades Maroon"
+        assert opposing == "Machine Orange"
+
+    def test_metadata_team_unknown_falls_through_to_prefix(self) -> None:
+        info = FakeGameInfo(home_team="Machine Orange", away_team="Blades Maroon")
+        event = FakeGameEvent(event_type="away_goal", metadata={"team": "neutral"})
+        scoring, opposing = _resolve_scoring_opposing(event, info)
+        assert scoring == "Blades Maroon"
+
+    def test_event_type_prefix_away(self) -> None:
+        info = FakeGameInfo(home_team="Machine Orange", away_team="Blades Maroon")
+        event = FakeGameEvent(event_type="away_goal", metadata={})
+        scoring, opposing = _resolve_scoring_opposing(event, info)
+        assert scoring == "Blades Maroon"
+        assert opposing == "Machine Orange"
+
+    def test_event_type_prefix_home(self) -> None:
+        info = FakeGameInfo(home_team="Machine Orange", away_team="Blades Maroon")
+        event = FakeGameEvent(event_type="HOME_GOAL", metadata={})
+        scoring, opposing = _resolve_scoring_opposing(event, info)
+        assert scoring == "Machine Orange"
+        assert opposing == "Blades Maroon"
+
+    def test_generic_event_type_no_metadata_returns_empty(self) -> None:
+        """Without any signal, return empty strings so the LLM prompt
+        falls back to inferring from context. Avoids making GPT trust
+        a wrong default."""
+        info = FakeGameInfo(home_team="Machine Orange", away_team="Blades Maroon")
+        event = FakeGameEvent(event_type="goal", metadata={})
+        scoring, opposing = _resolve_scoring_opposing(event, info)
+        assert scoring == ""
+        assert opposing == ""
+
+    def test_metadata_hint_beats_conflicting_event_type_prefix(self) -> None:
+        info = FakeGameInfo(home_team="Machine Orange", away_team="Blades Maroon")
+        # event_type says HOME_* but metadata says away → metadata wins
+        event = FakeGameEvent(
+            event_type="HOME_GOAL", metadata={"team": "away"}
+        )
+        scoring, _opposing = _resolve_scoring_opposing(event, info)
+        assert scoring == "Blades Maroon"
+
+    def test_none_game_info_returns_empty(self) -> None:
+        event = FakeGameEvent(event_type="goal", metadata={"team": "away"})
+        scoring, opposing = _resolve_scoring_opposing(event, None)
+        assert scoring == ""
+        assert opposing == ""
+
+    def test_none_game_event_returns_empty(self) -> None:
+        info = FakeGameInfo(home_team="Machine Orange", away_team="Blades Maroon")
+        scoring, opposing = _resolve_scoring_opposing(None, info)
+        assert scoring == ""
+        assert opposing == ""
+
+    def test_malformed_metadata_value_ignored(self) -> None:
+        """metadata['team'] being a non-string (e.g. dict, None, 1) must
+        not crash — fall through to event_type prefix."""
+        info = FakeGameInfo(home_team="Machine Orange", away_team="Blades Maroon")
+        event = FakeGameEvent(
+            event_type="away_goal", metadata={"team": 42}
+        )
+        scoring, _opposing = _resolve_scoring_opposing(event, info)
+        assert scoring == "Blades Maroon"
+
+    def test_non_dict_metadata_does_not_crash(self) -> None:
+        """Defensive: if metadata isn't a dict (e.g. None via duck-typed
+        event), don't crash."""
+        info = FakeGameInfo(home_team="Machine Orange", away_team="Blades Maroon")
+
+        class _MalformedEvent:
+            event_type = "away_goal"
+            metadata = None
+
+        scoring, _opposing = _resolve_scoring_opposing(_MalformedEvent(), info)
+        assert scoring == "Blades Maroon"  # falls through to event_type prefix
+
+
+# ------------------------------------------------------------------
+# on_queue with scoring_team prompt variable (REGRESSION)
+# ------------------------------------------------------------------
+
+
+class TestOnQueueScoringTeam:
+    """REGRESSION: on_queue must pass scoring_team and opposing_team
+    kwargs to generate_render_metadata, sourced from the game_event's
+    metadata['team']. Without this, GPT generates wrong attributions
+    like "Cozine scores for Machine Orange" for away-team plays.
+    """
+
+    @patch("reeln.core.queue.update_queue_item")
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
+    @patch("reeln_openai_plugin.plugin.OpenAIPlugin._get_client")
+    def test_on_queue_passes_scoring_team_from_metadata_away(
+        self,
+        mock_client: MagicMock,
+        mock_gen: MagicMock,
+        mock_update: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        from reeln_openai_plugin.render_metadata import RenderMetadata
+
+        mock_gen.return_value = RenderMetadata(title="T", description="D")
+        mock_update.return_value = MagicMock()
+
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
+        game_info = FakeGameInfo(
+            home_team="Machine Orange", away_team="Blades Maroon"
+        )
+        plugin._game_info = game_info
+        game_event = FakeGameEvent(
+            event_type="goal", metadata={"team": "away"}
+        )
+        queue_item = FakeQueueItem(player="#16 Colton Cozine", assists="")
+
+        context = HookContext(
+            hook=Hook.ON_QUEUE,
+            data={
+                "queue_item": queue_item,
+                "game_info": game_info,
+                "game_event": game_event,
+            },
+        )
+        plugin.on_queue(context)
+
+        call_kwargs = mock_gen.call_args[1]
+        assert call_kwargs["scoring_team"] == "Blades Maroon"
+        assert call_kwargs["opposing_team"] == "Machine Orange"
+
+    @patch("reeln.core.queue.update_queue_item")
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
+    @patch("reeln_openai_plugin.plugin.OpenAIPlugin._get_client")
+    def test_on_queue_passes_scoring_team_from_metadata_home(
+        self,
+        mock_client: MagicMock,
+        mock_gen: MagicMock,
+        mock_update: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        from reeln_openai_plugin.render_metadata import RenderMetadata
+
+        mock_gen.return_value = RenderMetadata(title="T", description="D")
+        mock_update.return_value = MagicMock()
+
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
+        game_info = FakeGameInfo(
+            home_team="Machine Orange", away_team="Blades Maroon"
+        )
+        plugin._game_info = game_info
+        game_event = FakeGameEvent(
+            event_type="goal", metadata={"team": "home"}
+        )
+        queue_item = FakeQueueItem(player="#13 Ben Remitz", assists="")
+
+        context = HookContext(
+            hook=Hook.ON_QUEUE,
+            data={
+                "queue_item": queue_item,
+                "game_info": game_info,
+                "game_event": game_event,
+            },
+        )
+        plugin.on_queue(context)
+
+        call_kwargs = mock_gen.call_args[1]
+        assert call_kwargs["scoring_team"] == "Machine Orange"
+        assert call_kwargs["opposing_team"] == "Blades Maroon"
+
+    @patch("reeln.core.queue.update_queue_item")
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
+    @patch("reeln_openai_plugin.plugin.OpenAIPlugin._get_client")
+    def test_on_queue_no_game_event_passes_empty_scoring_team(
+        self,
+        mock_client: MagicMock,
+        mock_gen: MagicMock,
+        mock_update: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        """When no game_event in context, pass empty strings rather
+        than crashing or guessing."""
+        from reeln_openai_plugin.render_metadata import RenderMetadata
+
+        mock_gen.return_value = RenderMetadata(title="T", description="D")
+        mock_update.return_value = MagicMock()
+
+        plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": True})
+        plugin._game_info = FakeGameInfo()
+
+        context = HookContext(
+            hook=Hook.ON_QUEUE,
+            data={
+                "queue_item": FakeQueueItem(),
+                "game_info": FakeGameInfo(),
+                # No game_event key
+            },
+        )
+        plugin.on_queue(context)
+
+        call_kwargs = mock_gen.call_args[1]
+        assert call_kwargs["scoring_team"] == ""
+        assert call_kwargs["opposing_team"] == ""

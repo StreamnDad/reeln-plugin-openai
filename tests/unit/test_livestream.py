@@ -117,6 +117,42 @@ class TestBuildPromptVariables:
         assert v["home_team"] == "X"
         assert v["away_team"] == ""
 
+    def test_with_namespace_metadata(self) -> None:
+        """Profiles whose metadata is a SimpleNamespace (as produced by
+        ``reeln hooks run`` after ``_dicts_to_namespaces``) must work the
+        same as dict metadata."""
+        from types import SimpleNamespace
+
+        info = FakeGameInfo()
+        home = FakeTeamProfile(metadata=SimpleNamespace(summary="Home ns summary"))
+        away = FakeTeamProfile(metadata=SimpleNamespace(summary="Away ns summary"))
+        v = build_prompt_variables(info, home_profile=home, away_profile=away)
+        assert v["home_profile"] == "Home ns summary"
+        assert v["away_profile"] == "Away ns summary"
+
+    def test_with_namespace_metadata_missing_summary(self) -> None:
+        """SimpleNamespace metadata without a ``summary`` attribute defaults to ''."""
+        from types import SimpleNamespace
+
+        info = FakeGameInfo()
+        home = FakeTeamProfile(metadata=SimpleNamespace())
+        v = build_prompt_variables(info, home_profile=home)
+        assert v["home_profile"] == ""
+
+    def test_with_none_metadata(self) -> None:
+        """Profile with metadata=None still produces an empty home_profile entry."""
+        info = FakeGameInfo()
+        home = FakeTeamProfile(metadata=None)
+        v = build_prompt_variables(info, home_profile=home)
+        assert v["home_profile"] == ""
+
+    def test_with_dict_metadata_missing_summary(self) -> None:
+        """Dict metadata without a ``summary`` key defaults to ''."""
+        info = FakeGameInfo()
+        home = FakeTeamProfile(metadata={"other": "value"})
+        v = build_prompt_variables(info, home_profile=home)
+        assert v["home_profile"] == ""
+
 
 # ------------------------------------------------------------------
 # generate_livestream_metadata

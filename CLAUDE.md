@@ -91,6 +91,23 @@ Update all three locations in lockstep:
 2. `reeln_openai_plugin/plugin.py` — `version` class attribute
 3. `CHANGELOG.md` — new section under `[Unreleased]` with date and description
 
+## Game State Boundary
+
+**Plugins MUST NOT directly read or mutate `game.json`.** Plugins interact with game
+state exclusively through `HookContext`:
+
+- **Read** game info via `context.data["game_info"]` (passed by the hook emitter)
+- **Share** computed results via `context.shared` (mutable dict on the frozen dataclass)
+- **Never** import `load_game_state`, `save_game_state`, or any `reeln-state` function
+- **Never** open, read, or write `game.json` directly
+
+The host application (dock or CLI) loads state before hooks fire and persists any state
+changes after hooks complete. Plugins are pure capability providers — they compute results
+and deposit them in `context.shared` for the host to consume.
+
+If a plugin needs to cause a state change (e.g., writing a livestream URL), it writes
+to `context.shared` and the host application calls the appropriate `reeln-state` mutation.
+
 ## Conventions
 
 - `from __future__ import annotations` in every module
