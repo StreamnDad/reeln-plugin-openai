@@ -31,6 +31,23 @@ LIVESTREAM_SCHEMA: dict[str, Any] = {
 }
 
 
+def _profile_summary(profile: object) -> str:
+    """Return the ``summary`` field from a profile's ``metadata``.
+
+    The ``metadata`` field may arrive as either a real ``dict`` (when the
+    plugin is invoked in-process with a ``TeamProfile`` dataclass) or as a
+    ``types.SimpleNamespace`` (when invoked via ``reeln hooks run``, which
+    recursively converts JSON dicts to namespaces for ``getattr`` access).
+    Handle both shapes here so callers don't have to.
+    """
+    meta = getattr(profile, "metadata", None)
+    if meta is None:
+        return ""
+    if isinstance(meta, dict):
+        return str(meta.get("summary", ""))
+    return str(getattr(meta, "summary", ""))
+
+
 def build_prompt_variables(
     game_info: object,
     home_profile: object | None = None,
@@ -50,11 +67,9 @@ def build_prompt_variables(
     }
 
     if home_profile is not None:
-        meta = getattr(home_profile, "metadata", None) or {}
-        variables["home_profile"] = str(meta.get("summary", ""))
+        variables["home_profile"] = _profile_summary(home_profile)
     if away_profile is not None:
-        meta = getattr(away_profile, "metadata", None) or {}
-        variables["away_profile"] = str(meta.get("summary", ""))
+        variables["away_profile"] = _profile_summary(away_profile)
 
     return variables
 

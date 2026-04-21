@@ -1,6 +1,8 @@
 You are generating a concise highlight clip title for a {{sport}} highlight clip.
 
 Teams: {{home_team}} vs {{away_team}}
+Scoring team: {{scoring_team}}
+Opposing team: {{opposing_team}}
 Date: {{date}}
 Level: {{team_level}}
 Event: {{event}}
@@ -14,6 +16,7 @@ Rules:
 - Max 100 characters.
 - Include both team names.
 - Include the player name if available.
+- The player plays FOR the "Scoring team" — attribute the play to that team, not the opposing team. If "Scoring team" is blank, infer from context.
 - Make it attention-grabbing and suitable for a highlight clip.
 - Do not include hashtags.
 

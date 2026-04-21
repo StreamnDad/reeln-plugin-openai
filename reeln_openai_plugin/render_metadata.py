@@ -42,6 +42,8 @@ def generate_render_metadata(
     assists: str = "",
     event_type: str = "",
     level: str = "",
+    scoring_team: str = "",
+    opposing_team: str = "",
 ) -> RenderMetadata:
     """Generate render metadata (title and description) from *game_info*.
 
@@ -50,6 +52,14 @@ def generate_render_metadata(
 
     When *clip_name* is provided it is included as a template variable
     so the LLM can incorporate the clip identifier.
+
+    When *scoring_team* and *opposing_team* are provided, they're exposed
+    as prompt variables so the LLM can correctly attribute the play to
+    the scoring team. Without these, the LLM defaults to guessing based
+    on team name order in the prompt — which reliably gets away-team
+    plays wrong (e.g. "Player scores for HomeTeam" when Player is on
+    AwayTeam). The caller is expected to determine the scoring team
+    from ``game_event.metadata['team']``.
     """
     variables = build_prompt_variables(game_info)
 
@@ -70,6 +80,12 @@ def generate_render_metadata(
 
     if level:
         variables["team_level"] = level
+
+    if scoring_team:
+        variables["scoring_team"] = scoring_team
+
+    if opposing_team:
+        variables["opposing_team"] = opposing_team
 
     title_prompt = prompt_registry.render("render_title", variables)
     desc_prompt = prompt_registry.render("render_description", variables)

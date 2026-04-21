@@ -200,3 +200,38 @@ class TestGenerateRenderMetadata:
         call_kwargs = client.request_structured.call_args[1]
         assert "goal" in call_kwargs["prompt"]
         assert "2016" in call_kwargs["prompt"]
+
+    def test_with_scoring_team_and_opposing_team(self) -> None:
+        """REGRESSION: scoring_team and opposing_team kwargs flow into
+        the rendered prompt so GPT can correctly attribute the play.
+        Without these, descriptions like "Cozine scores for Machine
+        Orange" were generated when Cozine is on Blades Maroon.
+        """
+        client = MagicMock()
+        client.request_structured.return_value = {
+            "title": "Cozine scores for Blades Maroon!",
+            "description": "Colton Cozine nets one for Blades Maroon against Machine Orange.",
+        }
+        registry = PromptRegistry()
+        info = FakeGameInfo(
+            home_team="Machine Orange", away_team="Blades Maroon"
+        )
+
+        result = generate_render_metadata(
+            client,
+            registry,
+            info,
+            player="#16 Colton Cozine",
+            event_type="goal",
+            scoring_team="Blades Maroon",
+            opposing_team="Machine Orange",
+        )
+
+        assert "Blades Maroon" in result.title
+        call_kwargs = client.request_structured.call_args[1]
+        prompt = call_kwargs["prompt"]
+        # Both variables should appear in the rendered prompt.
+        assert "Scoring team: Blades Maroon" in prompt
+        assert "Opposing team: Machine Orange" in prompt
+        # And the rules section should reference them so GPT uses them.
+        assert "Scoring team" in prompt
