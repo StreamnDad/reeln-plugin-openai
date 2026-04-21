@@ -1109,6 +1109,24 @@ class TestOnGameInitGameImage:
         assert "user-provided thumbnail" in caplog.text
 
     @patch("reeln_openai_plugin.plugin.generate_livestream_metadata")
+    def test_regenerate_image_only_skips_livestream_metadata(
+        self,
+        mock_gen: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        """When regenerate_image_only is set, livestream/playlist metadata is skipped."""
+        plugin = OpenAIPlugin({**plugin_config, "game_image_enabled": False})
+        context = HookContext(
+            hook=Hook.ON_GAME_INIT,
+            data={"game_info": FakeGameInfo(), "regenerate_image_only": True},
+        )
+
+        plugin.on_game_init(context)
+
+        mock_gen.assert_not_called()
+        assert "livestream_metadata" not in context.shared
+
+    @patch("reeln_openai_plugin.plugin.generate_livestream_metadata")
     def test_game_image_disabled_skips(
         self,
         mock_gen: MagicMock,
