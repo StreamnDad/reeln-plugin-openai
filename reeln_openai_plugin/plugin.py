@@ -86,7 +86,7 @@ class OpenAIPlugin:
     """
 
     name: str = "openai"
-    version: str = "0.9.0"
+    version: str = "0.10.0"
     api_version: int = 1
 
     config_schema: PluginConfigSchema = PluginConfigSchema(
