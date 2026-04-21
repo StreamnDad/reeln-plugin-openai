@@ -2058,7 +2058,7 @@ class TestResolveScoringOpposing:
     def test_metadata_team_unknown_falls_through_to_prefix(self) -> None:
         info = FakeGameInfo(home_team="Machine Orange", away_team="Blades Maroon")
         event = FakeGameEvent(event_type="away_goal", metadata={"team": "neutral"})
-        scoring, opposing = _resolve_scoring_opposing(event, info)
+        scoring, _opposing = _resolve_scoring_opposing(event, info)
         assert scoring == "Blades Maroon"
 
     def test_event_type_prefix_away(self) -> None:
