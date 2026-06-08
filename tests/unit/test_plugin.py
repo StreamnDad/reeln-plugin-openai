@@ -92,6 +92,9 @@ class TestPluginConfigSchema:
         assert defaults["render_metadata_enabled"] is False
         assert defaults["smart_zoom_enabled"] is False
         assert defaults["smart_zoom_model"] == "gpt-4.1"
+        # 0.10.1: graceful per-frame skip defaults.
+        assert defaults["min_zoom_points_success_ratio"] == 0.5
+        assert defaults["min_zoom_points"] == 2
         assert defaults["frame_description_enabled"] is False
         assert defaults["frame_description_model"] == "gpt-4.1"
 
@@ -1429,8 +1432,14 @@ class TestOnFramesExtracted:
         plugin_config: dict[str, Any],
         tmp_path: Path,
     ) -> None:
+        # The new graceful-skip path requires ≥ min_zoom_points (default 2)
+        # successful frames. Lower the threshold for this single-frame case
+        # so we exercise the success path without changing the default for
+        # real renders.
         mock_analyze.return_value = (0.3, 0.7)
-        plugin = OpenAIPlugin({**plugin_config, "smart_zoom_enabled": True})
+        plugin = OpenAIPlugin(
+            {**plugin_config, "smart_zoom_enabled": True, "min_zoom_points": 1}
+        )
         frames = self._make_frames(tmp_path, count=1)
         context = HookContext(
             hook=Hook.ON_FRAMES_EXTRACTED,
@@ -1472,14 +1481,14 @@ class TestOnFramesExtracted:
         assert zoom_path.duration == 10.0
 
     @patch("reeln_openai_plugin.plugin.analyze_frame_for_zoom")
-    def test_frame_error_signals_error_in_shared(
+    def test_all_frames_failing_signals_error(
         self,
         mock_analyze: MagicMock,
         plugin_config: dict[str, Any],
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Frame analysis failure after retries sets error in shared context."""
+        """Every frame failing → analysis fails (0/2 < 50% threshold)."""
         from reeln_openai_plugin.client import OpenAIError
 
         mock_analyze.side_effect = OpenAIError("HTTP 500 after retries")
@@ -1495,32 +1504,120 @@ class TestOnFramesExtracted:
 
         assert "smart_zoom" in context.shared
         assert "error" in context.shared["smart_zoom"]
-        assert "HTTP 500" in context.shared["smart_zoom"]["error"]
         assert "failed after retries" in caplog.text
 
     @patch("reeln_openai_plugin.plugin.analyze_frame_for_zoom")
-    def test_first_frame_error_aborts_all(
+    def test_one_frame_failure_continues_analysis(
+        self,
+        mock_analyze: MagicMock,
+        plugin_config: dict[str, Any],
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Regression for the user-reported timeout failure on frame_0005.
+
+        A single failing frame must NOT abort the whole analysis — the
+        Catmull-Rom smoothing in the renderer interpolates across the
+        gap. Previously this raised and the entire render failed; now
+        we skip the bad frame and continue with the remaining keypoints.
+        """
+        from reeln_openai_plugin.client import OpenAIError
+
+        # 18 frames; frame index 4 fails (matches user's frame_0005.png).
+        results: list[Any] = [(0.5, 0.5)] * 18
+        results[4] = OpenAIError("Request timed out after 30.0s")
+        mock_analyze.side_effect = results
+
+        plugin = OpenAIPlugin({**plugin_config, "smart_zoom_enabled": True})
+        frames = self._make_frames(tmp_path, count=18)
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED,
+            data={"frames": frames},
+        )
+
+        with caplog.at_level(logging.WARNING):
+            plugin.on_frames_extracted(context)
+
+        # All 18 frames attempted (no early abort).
+        assert mock_analyze.call_count == 18
+
+        # The shared zoom_path has 17 successful points — the bad frame
+        # is gone but the path is intact.
+        zoom_path = context.shared["smart_zoom"]["zoom_path"]
+        assert len(zoom_path.points) == 17
+
+        # The skipped frame is logged.
+        assert any("skipping" in r.message for r in caplog.records)
+
+    @patch("reeln_openai_plugin.plugin.analyze_frame_for_zoom")
+    def test_failure_below_ratio_threshold_raises(
+        self,
+        mock_analyze: MagicMock,
+        plugin_config: dict[str, Any],
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """When too many frames fail (< 50% by default), the analysis
+        signals an error so the renderer can fall back to a non-smart
+        crop mode rather than producing a wildly unreliable path."""
+        from reeln_openai_plugin.client import OpenAIError
+
+        # 4 frames; 3 fail (1/4 = 25% < 50% threshold).
+        results: list[Any] = [
+            OpenAIError("timeout"),
+            (0.5, 0.5),
+            OpenAIError("timeout"),
+            OpenAIError("timeout"),
+        ]
+        mock_analyze.side_effect = results
+
+        plugin = OpenAIPlugin({**plugin_config, "smart_zoom_enabled": True})
+        frames = self._make_frames(tmp_path, count=4)
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED,
+            data={"frames": frames},
+        )
+
+        with caplog.at_level(logging.ERROR):
+            plugin.on_frames_extracted(context)
+
+        assert "smart_zoom" in context.shared
+        assert "error" in context.shared["smart_zoom"]
+        # Surface counts in the error so users can see the success rate.
+        assert "1/4" in context.shared["smart_zoom"]["error"]
+
+    @patch("reeln_openai_plugin.plugin.analyze_frame_for_zoom")
+    def test_ratio_threshold_configurable(
         self,
         mock_analyze: MagicMock,
         plugin_config: dict[str, Any],
         tmp_path: Path,
     ) -> None:
-        """Error on first frame stops analysis — no partial zoom path."""
+        """``min_zoom_points_success_ratio=1.0`` restores the strict
+        pre-0.10.1 behaviour where every frame must succeed."""
         from reeln_openai_plugin.client import OpenAIError
 
-        mock_analyze.side_effect = OpenAIError("HTTP 502 Bad Gateway")
-        plugin = OpenAIPlugin({**plugin_config, "smart_zoom_enabled": True})
-        frames = self._make_frames(tmp_path, count=3)
+        # 10 frames, 1 fails (90% success) — passes default, fails strict.
+        results: list[Any] = [(0.5, 0.5)] * 10
+        results[3] = OpenAIError("timeout")
+        mock_analyze.side_effect = results
+
+        plugin = OpenAIPlugin(
+            {
+                **plugin_config,
+                "smart_zoom_enabled": True,
+                "min_zoom_points_success_ratio": 1.0,
+            }
+        )
+        frames = self._make_frames(tmp_path, count=10)
         context = HookContext(
             hook=Hook.ON_FRAMES_EXTRACTED,
             data={"frames": frames},
         )
 
         plugin.on_frames_extracted(context)
-
-        # Only called once — first frame fails, analysis stops
-        assert mock_analyze.call_count == 1
         assert "error" in context.shared["smart_zoom"]
+        assert "9/10" in context.shared["smart_zoom"]["error"]
 
     @patch("reeln_openai_plugin.plugin.analyze_frame_for_zoom")
     def test_model_override(
@@ -1648,6 +1745,9 @@ class TestOnFramesExtractedFrameDescription:
             **plugin_config,
             "smart_zoom_enabled": True,
             "frame_description_enabled": True,
+            # Single-frame test — lower the post-0.10.1 default so zoom
+            # still produces a path.
+            "min_zoom_points": 1,
         }
         plugin = OpenAIPlugin(config)
         frames = self._make_frames(tmp_path, count=1)
