@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.10.1] - 2026-06-07
+
+### Changed
+
+- Smart-zoom analysis now skips frames that fail after all retries instead of aborting the whole render. The renderer's Catmull-Rom smoothing (reeln-cli ≥ 0.0.40) interpolates across the missing keyframe without visible discontinuity, so a single OpenAI timeout no longer wastes the whole render. Failure is only signaled when the success rate falls below `min_zoom_points_success_ratio` (default 0.5) or fewer than `min_zoom_points` (default 2) frames succeed total — both configurable.
+
+### Added
+
+- `min_zoom_points_success_ratio` config field (default 0.5) — fraction of frames that must succeed for the analysis to be usable. Set to `1.0` to restore the pre-0.10.1 strict behaviour.
+- `min_zoom_points` config field (default 2) — absolute minimum number of successful keypoints required.
+
+### Fixed
+
+- "Smart zoom analysis failed after retries: Request timed out after 30.0s" when a single OpenAI vision call (e.g. on `frame_0005.png`) hit its timeout. Two-out-of-eighteen frame failures are now logged and skipped; the resulting zoom path is built from the remaining 16 keypoints and smoothed by the renderer.
+
 ## [0.9.0] - 2026-04-07
 
 ### Added

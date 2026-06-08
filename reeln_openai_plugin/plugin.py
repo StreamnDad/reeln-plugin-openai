@@ -86,7 +86,7 @@ class OpenAIPlugin:
     """
 
     name: str = "openai"
-    version: str = "0.10.0"
+    version: str = "0.10.1"
     api_version: int = 1
 
     config_schema: PluginConfigSchema = PluginConfigSchema(
@@ -193,6 +193,27 @@ class OpenAIPlugin:
                 field_type="str",
                 default="gpt-4.1",
                 description="OpenAI model for smart zoom vision analysis",
+            ),
+            ConfigField(
+                name="min_zoom_points_success_ratio",
+                field_type="float",
+                default=0.5,
+                description=(
+                    "Minimum fraction of zoom frames that must succeed for "
+                    "the analysis to be usable. Below this, the render fails. "
+                    "Set to 1.0 to require every frame to succeed (the pre-0.10.1 behaviour)."
+                ),
+            ),
+            ConfigField(
+                name="min_zoom_points",
+                field_type="int",
+                default=2,
+                description=(
+                    "Absolute minimum number of successful zoom keypoints "
+                    "required for a usable path. Catmull-Rom smoothing in the "
+                    "renderer handles missing frames gracefully, but needs at "
+                    "least two points to interpolate between."
+                ),
             ),
             ConfigField(
                 name="frame_description_enabled",
@@ -615,21 +636,45 @@ class OpenAIPlugin:
     ) -> ZoomPath | None:
         """Analyze each frame and return a :class:`ZoomPath`.
 
-        Each frame is retried with exponential backoff on transient errors.
-        If any frame fails after all retries, the entire analysis fails
-        (raises ``OpenAIError``) rather than producing a jittery zoom path
-        from fallback coordinates.
+        Each frame is retried with exponential backoff on transient errors
+        (HTTP 5xx, 429, network, timeout). When a frame still fails after
+        all retries, that frame is **skipped** rather than aborting the
+        whole analysis — the consumer-side spline smoothing in
+        ``reeln.core.zoom`` interpolates across the missing keyframe
+        without any visible discontinuity, so dropping one point of
+        eighteen is much better than failing the render.
+
+        Failure is only raised when the success rate falls below
+        ``min_zoom_points_success_ratio`` (default 0.5) OR fewer than
+        two points succeed total — below that we genuinely don't have
+        enough data to build a meaningful zoom path. Both thresholds
+        are configurable via plugin settings.
         """
         model = str(self._config.get("smart_zoom_model", "gpt-4.1"))
+        min_ratio = float(self._config.get("min_zoom_points_success_ratio", 0.5))
+        min_points = int(self._config.get("min_zoom_points", 2))
+
         points: list[ZoomPoint] = []
+        failed_frames: list[str] = []
 
         for frame_path, timestamp in zip(frames.frame_paths, frames.timestamps, strict=True):
-            center_x, center_y = analyze_frame_for_zoom(
-                client=client,
-                prompt_registry=self._prompt_registry,
-                frame_path=frame_path,
-                model=model,
-            )
+            try:
+                center_x, center_y = analyze_frame_for_zoom(
+                    client=client,
+                    prompt_registry=self._prompt_registry,
+                    frame_path=frame_path,
+                    model=model,
+                )
+            except OpenAIError as exc:
+                # Skip this frame — the spline will interpolate across it.
+                failed_frames.append(frame_path.name)
+                log.warning(
+                    "%s plugin: frame %s failed after retries, skipping (continuing with remaining frames): %s",
+                    self.name,
+                    frame_path.name,
+                    exc,
+                )
+                continue
 
             points.append(
                 ZoomPoint(
@@ -639,12 +684,33 @@ class OpenAIPlugin:
                 ),
             )
 
-        log.info(
-            "%s plugin: smart zoom analysis complete — %d/%d frames succeeded",
-            self.name,
-            len(frames.frame_paths),
-            len(frames.frame_paths),
-        )
+        total = len(frames.frame_paths)
+        succeeded = len(points)
+        ratio = succeeded / total if total > 0 else 0.0
+
+        if succeeded < min_points or ratio < min_ratio:
+            raise OpenAIError(
+                f"Smart zoom analysis failed: {succeeded}/{total} frames succeeded "
+                f"(need ≥{min_points} and ≥{min_ratio:.0%}); "
+                f"failed frames: {', '.join(failed_frames)}"
+            )
+
+        if failed_frames:
+            log.info(
+                "%s plugin: smart zoom analysis complete — %d/%d frames succeeded "
+                "(skipped: %s); spline will interpolate across gaps",
+                self.name,
+                succeeded,
+                total,
+                ", ".join(failed_frames),
+            )
+        else:
+            log.info(
+                "%s plugin: smart zoom analysis complete — %d/%d frames succeeded",
+                self.name,
+                succeeded,
+                total,
+            )
 
         return ZoomPath(
             points=tuple(points),
