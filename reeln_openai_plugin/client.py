@@ -31,10 +31,19 @@ class OpenAIClient:
         api_key: str,
         model: str = "gpt-4.1",
         timeout_seconds: float = 30.0,
+        temperature: float | None = None,
     ) -> None:
         self._api_key: str = api_key
         self._model: str = model
         self._timeout: float = timeout_seconds
+        # Sampling temperature plumbed into Responses-API payloads on
+        # request_structured calls that opt in via ``use_temperature=True``
+        # (the default). Reasoning-model families like gpt-5.x reject the
+        # parameter entirely — when that happens once, ``_temperature_blocked``
+        # latches so subsequent calls drop it preemptively instead of
+        # burning a 400 + retry on every frame.
+        self._temperature: float | None = temperature
+        self._temperature_blocked: bool = False
 
     def __repr__(self) -> str:
         return f"OpenAIClient(model={self._model!r}, api_key='[REDACTED]')"
@@ -51,6 +60,7 @@ class OpenAIClient:
         *,
         images: list[str] | None = None,
         model_override: str | None = None,
+        use_temperature: bool = True,
     ) -> dict[str, Any]:
         """Send a text prompt and return the parsed JSON response.
 
@@ -58,6 +68,15 @@ class OpenAIClient:
         ``json_schema`` response format.  When *images* is provided, base64
         PNG images are prepended as ``input_image`` content blocks.  When
         *model_override* is set it replaces the client's default model.
+
+        *use_temperature* controls whether the client-level ``temperature``
+        is included in the payload.  Set to False for calls where output
+        determinism matters (structured coordinates, factual descriptions)
+        OR where the model is known to reject the parameter — newer
+        reasoning models (gpt-5.x, o-series) raise HTTP 400 on temperature.
+        On the first such 400 the client latches ``_temperature_blocked``
+        and stops sending temperature for every subsequent call, so a
+        chain of frame calls only pays the discovery cost once.
         """
         payload = self._build_payload(
             prompt,
@@ -65,8 +84,30 @@ class OpenAIClient:
             schema_name,
             images=images,
             model_override=model_override,
+            use_temperature=use_temperature,
         )
-        raw = self._post(payload)
+        try:
+            raw = self._post(payload)
+        except OpenAIError as exc:
+            # The model rejected ``temperature`` entirely. Drop it from this
+            # payload, latch the flag so we don't try again on the next
+            # call, and retry once. If the retry also fails it's a real
+            # error — propagate.
+            if (
+                use_temperature
+                and not self._temperature_blocked
+                and self._is_temperature_400(exc)
+            ):
+                self._temperature_blocked = True
+                log.info(
+                    "Model %s rejected 'temperature' parameter — dropping it for "
+                    "this and all subsequent calls.",
+                    payload.get("model"),
+                )
+                payload.pop("temperature", None)
+                raw = self._post(payload)
+            else:
+                raise
         return self._parse_response(raw)
 
     def request_image(
@@ -116,13 +157,14 @@ class OpenAIClient:
         *,
         images: list[str] | None = None,
         model_override: str | None = None,
+        use_temperature: bool = True,
     ) -> dict[str, Any]:
         content: list[dict[str, str]] = []
         if images:
             content.extend({"type": "input_image", "image_url": f"data:image/png;base64,{b64}"} for b64 in images)
         content.append({"type": "input_text", "text": prompt})
 
-        return {
+        payload: dict[str, Any] = {
             "model": model_override if model_override is not None else self._model,
             "input": [
                 {
@@ -138,6 +180,26 @@ class OpenAIClient:
                 },
             },
         }
+        if (
+            use_temperature
+            and not self._temperature_blocked
+            and self._temperature is not None
+        ):
+            payload["temperature"] = self._temperature
+        return payload
+
+    @staticmethod
+    def _is_temperature_400(exc: OpenAIError) -> bool:
+        """True iff *exc* is an HTTP 400 specifically rejecting the
+        ``temperature`` parameter — the signal we use to drop temperature
+        for the rest of this client's lifetime."""
+        message = str(exc)
+        if "HTTP 400" not in message:
+            return False
+        # The OpenAI error envelope is JSON-shaped inside the message; a
+        # substring check is robust against minor format drift and avoids
+        # parsing the embedded JSON for one field.
+        return "'temperature'" in message or '"temperature"' in message
 
     def _build_image_payload(
         self,

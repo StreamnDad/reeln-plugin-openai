@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.11.0] - 2026-06-19
+
+### Changed
+
+- **Bundled `render_title` and `render_description` prompts rewritten** with a Mike Emrick-style play-by-play persona, vivid action verbs, and explicit anti-template rules. Previously the prompts enumerated `Player: …`, `Teams: …`, etc. as labeled fields — which led the model to echo them back as bland titles like "#24 Player Goal - HomeTeam vs AwayTeam". The new prompts narrate the play and forbid that template, producing varied, voice-driven headlines.
+
+### Added
+
+- `temperature` config field (default `0.9`) plumbed through `OpenAIClient` into every Responses-API payload — the lever the new persona prompts rely on to produce varied output instead of collapsing into the same headline shape. Set to `-1` to omit and use the model default.
+- `render_metadata_use_frames` config field (default `true`) — pass extracted frame images directly into the render-metadata vision prompt so the model SEES the play instead of reading a pre-summarized `frame_summary` string. Frames are evenly sampled (cap: 5) to bound token usage. Requires `smart_zoom_enabled` or `frame_description_enabled` upstream (those drive extraction).
+- Per-language commentator translation prompts: `translate_sv` (Niklas Wikegard, Swedish), `translate_fi` (Antero Mertaranta, Finnish), `translate_ru` (Dmitry Guberniev, Russian). Wire them via `translate_per_language_prompts` config — e.g. `{"sv": "translate_sv", "fi": "translate_fi", "ru": "translate_ru"}`.
+
+### Fixed
+
+- Bland, repetitive titles caused by labeled-field prompt structure + missing sampling temperature. The combined fix (persona prompts + non-default temperature + optional vision) restores the creative output users had from the pre-plugin generation pipeline.
+- Smart-zoom and frame-description calls now skip the `temperature` parameter (they need deterministic output, and reasoning-model families like `gpt-5.x` and o-series reject it outright with HTTP 400). Creative-text calls still send it, with a graceful latched-retry-without-temperature fallback the first time any model rejects the parameter — so a single user-visible call burns the discovery cost, not every frame in a 16-frame smart-zoom analysis.
+
 ## [0.10.1] - 2026-06-07
 
 ### Changed

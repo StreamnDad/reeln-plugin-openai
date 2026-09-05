@@ -86,7 +86,7 @@ class OpenAIPlugin:
     """
 
     name: str = "openai"
-    version: str = "0.10.1"
+    version: str = "0.11.0"
     api_version: int = 1
 
     config_schema: PluginConfigSchema = PluginConfigSchema(
@@ -115,6 +115,18 @@ class OpenAIPlugin:
                 field_type="float",
                 default=30.0,
                 description="Timeout in seconds for API requests",
+            ),
+            ConfigField(
+                name="temperature",
+                field_type="float",
+                default=0.9,
+                description=(
+                    "Sampling temperature for text generation (0.0 = deterministic, "
+                    "1.0+ = more creative). The bundled persona-driven prompts need "
+                    "a higher temperature to produce varied, voice-driven headlines "
+                    "instead of collapsing back into the bland default template. "
+                    "Set to -1 to use the model's API default."
+                ),
             ),
             ConfigField(
                 name="prompt_overrides",
@@ -227,6 +239,19 @@ class OpenAIPlugin:
                 default="gpt-4.1",
                 description="OpenAI model for frame description generation",
             ),
+            ConfigField(
+                name="render_metadata_use_frames",
+                field_type="bool",
+                default=True,
+                description=(
+                    "Pass extracted frame images directly into the render-metadata "
+                    "title/description prompt (vision). Lets the model SEE the play "
+                    "instead of reading a pre-summarized frame_summary string, which "
+                    "is the biggest single quality lever for varied, action-aware "
+                    "titles. Frames are only available when smart_zoom_enabled or "
+                    "frame_description_enabled triggered extraction earlier."
+                ),
+            ),
         )
     )
 
@@ -235,6 +260,12 @@ class OpenAIPlugin:
         self._client: OpenAIClient | None = None
         self._game_info: object | None = None
         self._frame_descriptions: FrameDescriptions | None = None
+        # Frame image paths captured from ON_FRAMES_EXTRACTED so the
+        # render-metadata generation can pass them directly into the
+        # vision-enabled prompt (see ``render_metadata_use_frames``).
+        # Cleared by the consumer to avoid carrying stale frames across
+        # render calls within the same process.
+        self._frame_paths: list[Path] = []
 
         # Parse JSON string configs
         self._prompt_overrides: dict[str, str] = self._parse_json_config("prompt_overrides")
@@ -470,6 +501,14 @@ class OpenAIPlugin:
             frame_summary = self._frame_descriptions.summary
             self._frame_descriptions = None
 
+        # Pop the captured frame paths so vision input is fresh per render.
+        # Without this, a second render in the same process would reuse the
+        # previous clip's frames in the prompt.
+        frame_paths: list[Path] = []
+        if self._config.get("render_metadata_use_frames", True):
+            frame_paths = self._frame_paths
+            self._frame_paths = []
+
         player_name = getattr(queue_item, "player", "")
         assists_str = getattr(queue_item, "assists", "")
         event_type = getattr(queue_item, "event_type", "")
@@ -494,6 +533,7 @@ class OpenAIPlugin:
                 game_info,
                 clip_name=clip_name,
                 frame_summary=frame_summary,
+                frame_paths=frame_paths,
                 player=player_name,
                 assists=assists_str,
                 event_type=event_type,
@@ -554,6 +594,11 @@ class OpenAIPlugin:
             frame_summary = self._frame_descriptions.summary
             self._frame_descriptions = None
 
+        frame_paths: list[Path] = []
+        if self._config.get("render_metadata_use_frames", True):
+            frame_paths = self._frame_paths
+            self._frame_paths = []
+
         # Extract event context from hook data
         player_name = context.data.get("player", "")
         assists_str = context.data.get("assists", "")
@@ -571,6 +616,7 @@ class OpenAIPlugin:
                 game_info,
                 clip_name=clip_name,
                 frame_summary=frame_summary,
+                frame_paths=frame_paths,
                 player=player_name,
                 assists=assists_str,
                 event_type=event_type,
@@ -592,8 +638,12 @@ class OpenAIPlugin:
         """Handle ``ON_FRAMES_EXTRACTED`` — analyze frames for zoom targets and describe frames."""
         smart_zoom_enabled = self._config.get("smart_zoom_enabled", False)
         frame_desc_enabled = self._config.get("frame_description_enabled", False)
+        render_meta_use_frames = (
+            self._config.get("render_metadata_enabled", False)
+            and self._config.get("render_metadata_use_frames", True)
+        )
 
-        if not smart_zoom_enabled and not frame_desc_enabled:
+        if not smart_zoom_enabled and not frame_desc_enabled and not render_meta_use_frames:
             return
 
         frames_data = context.data.get("frames")
@@ -605,6 +655,17 @@ class OpenAIPlugin:
 
         if not frames.frame_paths:
             log.warning("%s plugin: empty frame list, skipping", self.name)
+            return
+
+        # Capture frame paths up-front so render-metadata vision can consume
+        # them later, even when smart_zoom/frame_description aren't both
+        # enabled. The render-metadata consumer clears the list after use.
+        if render_meta_use_frames:
+            self._frame_paths = list(frames.frame_paths)
+
+        if not smart_zoom_enabled and not frame_desc_enabled:
+            # Nothing left to do here — render-metadata will pick up the
+            # paths from ``self._frame_paths`` during POST_RENDER / ON_QUEUE.
             return
 
         try:
@@ -763,11 +824,19 @@ class OpenAIPlugin:
         api_key = self._resolve_api_key()
         model = self._config.get("model", "gpt-4.1")
         timeout = self._config.get("request_timeout_seconds", 30.0)
+        temperature_raw = self._config.get("temperature", 0.9)
+        # ``-1`` is the documented escape hatch for "use the model's API
+        # default" — leave temperature out of the payload entirely. Any
+        # non-negative number is passed through verbatim.
+        temperature: float | None = None
+        if temperature_raw is not None and float(temperature_raw) >= 0:
+            temperature = float(temperature_raw)
 
         self._client = OpenAIClient(
             api_key=api_key,
             model=str(model),
             timeout_seconds=float(timeout),
+            temperature=temperature,
         )
         return self._client
 

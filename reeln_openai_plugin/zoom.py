@@ -95,6 +95,11 @@ def analyze_frame_for_zoom(
                 "smart_zoom_detect",
                 images=[b64_image],
                 model_override=model,
+                # Smart zoom returns normalized coordinates — there is no
+                # creative output to vary. Skipping temperature also keeps
+                # the call compatible with reasoning-model families
+                # (gpt-5.x, o-series) that reject the parameter outright.
+                use_temperature=False,
             )
             center_x = _clamp(float(result["center_x"]))
             center_y = _clamp(float(result["center_y"]))

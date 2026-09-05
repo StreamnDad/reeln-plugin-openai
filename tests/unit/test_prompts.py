@@ -58,6 +58,46 @@ class TestPromptRegistryBundled:
         template = registry.load("translate_single")
         assert "{{language_code}}" in template.text
 
+    def test_per_language_translate_prompts_exist(self) -> None:
+        """Each per-language commentator persona ships as its own bundled
+        template so users can wire them via ``translate_per_language_prompts``
+        without authoring custom files. Persona names are hard-checked here
+        so a careless edit to a template still fails the suite — the personas
+        are the entire point of this prompt set.
+        """
+        registry = PromptRegistry()
+        sv = registry.load("translate_sv")
+        assert "Wikegard" in sv.text  # Swedish commentator voice
+        assert "{{title}}" in sv.text
+        assert "{{description}}" in sv.text
+
+        fi = registry.load("translate_fi")
+        assert "Mertaranta" in fi.text  # Finnish commentator voice
+        assert "{{title}}" in fi.text
+
+        ru = registry.load("translate_ru")
+        assert "Guberniev" in ru.text  # Russian commentator voice
+        assert "{{title}}" in ru.text
+
+    def test_render_title_uses_mike_emrick_voice(self) -> None:
+        """The default English render-title prompt MUST anchor on Mike Emrick's
+        voice — that's the whole reason the prompts were rewritten. Without
+        a persona anchor the model collapses back into bland "<Player> Goal"
+        templates regardless of temperature.
+        """
+        registry = PromptRegistry()
+        template = registry.load("render_title")
+        assert "Mike Emrick" in template.text
+        assert "{{player}}" in template.text
+        assert "{{scoring_team}}" in template.text
+
+    def test_render_description_uses_mike_emrick_voice(self) -> None:
+        registry = PromptRegistry()
+        template = registry.load("render_description")
+        assert "Mike Emrick" in template.text
+        assert "{{scoring_team}}" in template.text
+        assert "{{opposing_team}}" in template.text
+
     def test_missing_prompt_raises(self) -> None:
         registry = PromptRegistry()
         with pytest.raises(PromptError, match="not found"):

@@ -543,6 +543,38 @@ class TestOnGameInitPlaylist:
 
 
 class TestOnQueue:
+    @patch("reeln.core.queue.update_queue_item")
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
+    @patch("reeln_openai_plugin.plugin.OpenAIPlugin._get_client")
+    def test_frame_vision_disabled_does_not_consume_paths(
+        self,
+        mock_client: MagicMock,
+        mock_gen: MagicMock,
+        mock_update: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        from reeln_openai_plugin.render_metadata import RenderMetadata
+
+        mock_gen.return_value = RenderMetadata(title="T", description="D")
+        plugin = OpenAIPlugin(
+            {
+                **plugin_config,
+                "render_metadata_enabled": True,
+                "render_metadata_use_frames": False,
+            }
+        )
+        plugin._game_info = FakeGameInfo()
+        saved_paths = [Path("frame.png")]
+        plugin._frame_paths = saved_paths
+        context = HookContext(
+            hook=Hook.ON_QUEUE, data={"queue_item": FakeQueueItem()}
+        )
+
+        plugin.on_queue(context)
+
+        assert mock_gen.call_args.kwargs["frame_paths"] == []
+        assert plugin._frame_paths == saved_paths
+
     def test_disabled_skips(self, plugin_config: dict[str, Any]) -> None:
         plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": False})
         queue_item = FakeQueueItem()
@@ -761,6 +793,36 @@ class TestOnQueue:
 
 
 class TestOnPostRender:
+    @patch("reeln_openai_plugin.plugin.generate_render_metadata")
+    @patch("reeln_openai_plugin.plugin.OpenAIPlugin._get_client")
+    def test_frame_vision_disabled_does_not_consume_paths(
+        self,
+        mock_client: MagicMock,
+        mock_gen: MagicMock,
+        plugin_config: dict[str, Any],
+    ) -> None:
+        from reeln_openai_plugin.render_metadata import RenderMetadata
+
+        mock_gen.return_value = RenderMetadata(title="T", description="D")
+        plugin = OpenAIPlugin(
+            {
+                **plugin_config,
+                "render_metadata_enabled": True,
+                "render_metadata_use_frames": False,
+            }
+        )
+        plugin._game_info = FakeGameInfo()
+        saved_paths = [Path("frame.png")]
+        plugin._frame_paths = saved_paths
+        plan = MagicMock()
+        plan.output.stem = "clip"
+        context = HookContext(hook=Hook.POST_RENDER, data={"plan": plan})
+
+        plugin.on_post_render(context)
+
+        assert mock_gen.call_args.kwargs["frame_paths"] == []
+        assert plugin._frame_paths == saved_paths
+
     def test_disabled_skips(self, plugin_config: dict[str, Any]) -> None:
         plugin = OpenAIPlugin({**plugin_config, "render_metadata_enabled": False})
         plugin._game_info = FakeGameInfo()
@@ -1066,6 +1128,16 @@ class TestGetClient:
         client = plugin._get_client()
         assert client._model == "gpt-5"
         assert client._timeout == 60.0
+
+    @pytest.mark.parametrize("temperature", [-1, None])
+    def test_temperature_escape_hatches_omit_parameter(
+        self, api_key_file: Path, temperature: float | None
+    ) -> None:
+        plugin = OpenAIPlugin(
+            {"api_key_file": str(api_key_file), "temperature": temperature}
+        )
+        client = plugin._get_client()
+        assert client._temperature is None
 
 
 # ------------------------------------------------------------------
@@ -1375,6 +1447,27 @@ class TestOnFramesExtracted:
         )
         plugin.on_frames_extracted(context)
         assert "smart_zoom" not in context.shared
+
+    def test_render_metadata_only_captures_frames(
+        self, plugin_config: dict[str, Any], tmp_path: Path
+    ) -> None:
+        plugin = OpenAIPlugin(
+            {
+                **plugin_config,
+                "render_metadata_enabled": True,
+                "render_metadata_use_frames": True,
+                "smart_zoom_enabled": False,
+                "frame_description_enabled": False,
+            }
+        )
+        frames = self._make_frames(tmp_path, count=2)
+        context = HookContext(
+            hook=Hook.ON_FRAMES_EXTRACTED, data={"frames": frames}
+        )
+
+        plugin.on_frames_extracted(context)
+
+        assert plugin._frame_paths == list(frames.frame_paths)
 
     def test_no_frames_data_warns(
         self,

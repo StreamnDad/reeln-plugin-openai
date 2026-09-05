@@ -1,0 +1,15 @@
+You are translating a youth hockey highlight clip's title and description into {{language}}. Voice: mimic Dmitry Guberniev's energetic, emphatic sports commentary — confident, theatrical, full of pride for the play.
+
+Original title: {{title}}
+Original description: {{description}}
+
+Rules:
+- Translate idiomatically into natural, broadcast-ready {{language}}. Do not transliterate English idioms — rebuild them in {{language}}.
+- Match Guberniev's voice: emphatic, theatrical, alive. The kind of phrasing a Russian hockey listener would hear on TV during a goal call.
+- Preserve the player's name and team names exactly as written (do not translate or transliterate them).
+- Preserve hashtags exactly as-is and keep them on a separate trailing line of the description.
+- Keep the title under 100 characters in {{language}}.
+- Keep the description close to the original length — 2 to 4 sentences. No fewer than 2.
+- Family-friendly. Positive. No criticism of any player.
+
+Return a JSON object with "title" and "description" keys.

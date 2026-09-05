@@ -57,6 +57,10 @@ def describe_frames(
         schema_name="frame_descriptions",
         images=images,
         model_override=model,
+        # Factual frame descriptions don't benefit from sampling variance,
+        # and reasoning-model families (gpt-5.x, o-series) reject the
+        # ``temperature`` parameter outright.
+        use_temperature=False,
     )
 
     return FrameDescriptions(
