@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from reeln.models.auth import AuthCheckResult, AuthStatus
+from reeln.models.plugin_input import InputField, PluginInputSchema
 from reeln.models.plugin_schema import ConfigField, PluginConfigSchema
 from reeln.models.zoom import ExtractedFrames, ZoomPath, ZoomPoint
 from reeln.plugins.hooks import Hook, HookContext
@@ -19,7 +20,7 @@ from reeln.plugins.registry import HookRegistry
 
 from reeln_openai_plugin.client import OpenAIClient, OpenAIError
 from reeln_openai_plugin.frames import FrameDescriptions, describe_frames
-from reeln_openai_plugin.game_image import generate_game_image
+from reeln_openai_plugin.game_image import add_sponsor_to_existing_game_image, generate_game_image
 from reeln_openai_plugin.livestream import generate_livestream_metadata
 from reeln_openai_plugin.playlist import generate_playlist_metadata
 from reeln_openai_plugin.prompts import PromptRegistry
@@ -86,7 +87,7 @@ class OpenAIPlugin:
     """
 
     name: str = "openai"
-    version: str = "0.11.0"
+    version: str = "0.13.0"
     api_version: int = 1
 
     config_schema: PluginConfigSchema = PluginConfigSchema(
@@ -287,12 +288,37 @@ class OpenAIPlugin:
         registry.register(Hook.POST_RENDER, self.on_post_render)
         registry.register(Hook.ON_FRAMES_EXTRACTED, self.on_frames_extracted)
 
+    def get_input_schema(self) -> PluginInputSchema:
+        """Offer a dedicated optional logo file when generating game images."""
+        if not self._config.get("game_image_enabled", False):
+            return PluginInputSchema(fields=())
+        return PluginInputSchema(fields=(
+            InputField(
+                id="sponsor_logo_path",
+                label="Game Sponsor Logo",
+                field_type="file",
+                command="game_init",
+                plugin_name="openai",
+                required=False,
+                description="Original static 8-bit sRGB PNG, fitted proportionally in the sponsor footer",
+            ),
+        ))
+
     def on_game_init(self, context: HookContext) -> None:
         """Handle ``ON_GAME_INIT`` — generate livestream metadata."""
         if not self._config.get("enabled", False):
             return
 
+        image_only = context.data.get("regenerate_image_only", False)
+        if image_only and "existing_game_image_path" in context.data:
+            self._sponsor_existing_game_image(context)
+            return
+
+        # Dock can regenerate an image without passing game_info to the
+        # other ON_GAME_INIT handlers that initialize live game state.
         game_info = context.data.get("game_info")
+        if image_only:
+            game_info = context.data.get("game_image_info", game_info)
         if game_info is None:
             log.warning("%s plugin: no game_info in context, skipping", self.name)
             return
@@ -302,7 +328,6 @@ class OpenAIPlugin:
         home_profile = context.data.get("home_profile")
         away_profile = context.data.get("away_profile")
         user_thumbnail = getattr(game_info, "thumbnail", "")
-        image_only = context.data.get("regenerate_image_only", False)
 
         try:
             client = self._get_client()
@@ -328,6 +353,33 @@ class OpenAIPlugin:
                 )
             else:
                 self._maybe_generate_game_image(client, game_info, context, home_profile, away_profile)
+
+    def _sponsor_existing_game_image(self, context: HookContext) -> None:
+        """Handle a user-supplied finished image without starting an OpenAI client."""
+        source = context.data.get("existing_game_image_path")
+        game_dir = context.data.get("game_dir")
+        output_dir = self._config.get("game_image_output_dir", "")
+        context.shared.pop("game_image", None)
+        try:
+            if not isinstance(source, (str, Path)) or not str(source).strip():
+                raise OpenAIError("Choose an existing game image in PNG, JPG, or WebP format.")
+            if not isinstance(game_dir, (str, Path)) or not str(game_dir).strip():
+                raise OpenAIError("A game directory is required to apply a sponsor logo.")
+            if not output_dir:
+                raise OpenAIError("Set the game image output directory before applying a sponsor logo.")
+            image_path = add_sponsor_to_existing_game_image(Path(source), Path(game_dir), Path(output_dir))
+        except OpenAIError as exc:
+            context.shared["game_image_error"] = str(exc)
+            log.warning("%s plugin: sponsor footer failed: %s", self.name, exc)
+            return
+
+        context.shared["game_image"] = {
+            "image_path": str(image_path),
+            "sponsor_logo_applied": True,
+            "existing_artwork_preserved": True,
+        }
+        context.shared.pop("game_image_error", None)
+        log.info("%s plugin: added sponsor to existing game image: %s", self.name, image_path)
 
     def _generate_livestream_metadata(
         self,
@@ -446,6 +498,15 @@ class OpenAIPlugin:
             return
 
         try:
+            game_dir = context.data.get("game_dir")
+            plugin_inputs = context.data.get("plugin_inputs")
+            sponsor_path = (
+                plugin_inputs.get("sponsor_logo_path")
+                if isinstance(plugin_inputs, dict)
+                else getattr(plugin_inputs, "sponsor_logo_path", None)
+            )
+            raw_prompt_override = context.data.get("game_image_prompt")
+            prompt_override = raw_prompt_override.strip() if isinstance(raw_prompt_override, str) else ""
             image_result = generate_game_image(
                 client=client,
                 prompt_registry=self._prompt_registry,
@@ -462,10 +523,20 @@ class OpenAIPlugin:
                 level=str(getattr(game_info, "level", "")),
                 description=str(getattr(game_info, "description", "")),
                 tournament=str(getattr(game_info, "tournament", "")),
+                game_dir=Path(game_dir) if game_dir else None,
+                sponsor_logo_path=Path(sponsor_path) if sponsor_path else None,
+                sport=str(getattr(game_info, "sport", "") or ""),
+                prompt_override=prompt_override or None,
             )
-            context.shared["game_image"] = {"image_path": str(image_result.image_path)}
+            context.shared["game_image"] = {
+                "image_path": str(image_result.image_path),
+                "team_logos_composited": image_result.team_logos_composited,
+                "sponsor_logo_applied": image_result.sponsor_logo_applied,
+            }
+            context.shared.pop("game_image_error", None)
             log.info("%s plugin: generated game image: %s", self.name, image_result.image_path)
         except OpenAIError as exc:
+            context.shared["game_image_error"] = str(exc)
             log.warning("%s plugin: game image generation failed: %s", self.name, exc)
 
     def on_queue(self, context: HookContext) -> None:

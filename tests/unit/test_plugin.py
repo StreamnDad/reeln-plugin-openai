@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import io
+import json
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from PIL import Image
 from reeln.plugins.hooks import Hook, HookContext
 from reeln.plugins.registry import HookRegistry
 
@@ -1146,6 +1150,14 @@ class TestGetClient:
 
 
 class TestOnGameInitGameImage:
+    def test_exposes_optional_sponsor_file_when_enabled(self) -> None:
+        assert OpenAIPlugin().get_input_schema().fields == ()
+        (field,) = OpenAIPlugin({"game_image_enabled": True}).get_input_schema().fields
+        assert field.id == "sponsor_logo_path"
+        assert field.command == "game_init"
+        assert field.field_type == "file"
+        assert field.required is False
+
     @patch("reeln_openai_plugin.plugin.generate_game_image")
     @patch("reeln_openai_plugin.plugin.generate_livestream_metadata")
     def test_user_provided_thumbnail_skips_image_generation(
@@ -1231,7 +1243,9 @@ class TestOnGameInitGameImage:
 
         mock_livestream.return_value = LivestreamMetadata(title="T", description="D")
         img_path = tmp_path / "game.png"
-        mock_game_image.return_value = GameImageResult(image_path=img_path)
+        mock_game_image.return_value = GameImageResult(
+            image_path=img_path, team_logos_composited=True, sponsor_logo_applied=True,
+        )
 
         home_info = FakeTeamInfo(team_name="Storm", logo_path=tmp_path / "h.png")
         away_info = FakeTeamInfo(team_name="Thunder", logo_path=tmp_path / "a.png")
@@ -1249,8 +1263,118 @@ class TestOnGameInitGameImage:
 
         plugin.on_game_init(context)
 
-        assert context.shared["game_image"]["image_path"] == str(img_path)
+        assert context.shared["game_image"] == {
+            "image_path": str(img_path),
+            "team_logos_composited": True,
+            "sponsor_logo_applied": True,
+        }
         mock_game_image.assert_called_once()
+
+    @pytest.mark.parametrize("game_info_key", ["game_info", "game_image_info"])
+    @pytest.mark.parametrize("namespace", [False, True])
+    @patch("reeln_openai_plugin.plugin.generate_game_image")
+    def test_sponsor_binds_to_explicit_file_input(
+        self,
+        mock_game_image: MagicMock,
+        plugin_config: dict[str, Any],
+        tmp_path: Path,
+        namespace: bool,
+        game_info_key: str,
+    ) -> None:
+        from reeln_openai_plugin.game_image import GameImageResult
+
+        mock_game_image.return_value = GameImageResult(image_path=tmp_path / "final.png")
+        plugin = OpenAIPlugin({**plugin_config, "game_image_enabled": True, "game_image_output_dir": str(tmp_path)})
+        sponsor_path = tmp_path / "source.png"
+        inputs = {"sponsor_logo_path": str(sponsor_path), "other_image": "ignored.png"}
+        context = HookContext(
+            hook=Hook.ON_GAME_INIT,
+            data={
+                "game_dir": str(tmp_path),
+                game_info_key: FakeGameInfo(sport="hockey"),
+                "home_profile": FakeTeamInfo(team_name="Storm", logo_path=tmp_path / "h.png"),
+                "away_profile": FakeTeamInfo(team_name="Thunder", logo_path=tmp_path / "a.png"),
+                "plugin_inputs": SimpleNamespace(**inputs) if namespace else inputs,
+                "regenerate_image_only": True,
+            },
+        )
+
+        plugin.on_game_init(context)
+
+        assert mock_game_image.call_args.kwargs["game_dir"] == tmp_path
+        assert mock_game_image.call_args.kwargs["sponsor_logo_path"] == sponsor_path
+        assert mock_game_image.call_args.kwargs["sport"] == "hockey"
+
+    @pytest.mark.parametrize(
+        ("override", "use_configured_template"),
+        [(None, False), ("  Draw an abstract {{sport}} scene at {{rink}}.  ", True), ("  ", True), (42, True)],
+    )
+    @patch.object(OpenAIPlugin, "_get_client")
+    def test_game_image_uses_game_context_and_one_run_prompt(
+        self,
+        mock_get_client: MagicMock,
+        plugin_config: dict[str, Any],
+        tmp_path: Path,
+        override: object,
+        use_configured_template: bool,
+    ) -> None:
+        from reeln_openai_plugin.game_image import BACKGROUND_INSTRUCTIONS
+
+        home_logo_path = tmp_path / "home.png"
+        away_logo_path = tmp_path / "away.png"
+        Image.new("RGB", (20, 20), "blue").save(home_logo_path)
+        Image.new("RGB", (20, 20), "gold").save(away_logo_path)
+        background = io.BytesIO()
+        Image.new("RGB", (128, 72), "navy").save(background, "PNG")
+        image_request = mock_get_client.return_value.request_image
+        image_request.return_value = background.getvalue()
+
+        config = {
+            **plugin_config,
+            "game_image_enabled": True,
+            "game_image_output_dir": str(tmp_path),
+            "prompt_context": json.dumps({"game_image": ["A {{venue}} backdrop on {{game_date}}."]}),
+        }
+        configured_template = "Configured: {{sport}} at {{venue}} on {{date}}."
+        if use_configured_template:
+            override_path = tmp_path / "game_image.txt"
+            override_path.write_text(configured_template)
+            config["prompt_overrides"] = json.dumps({"game_image": str(override_path)})
+        plugin = OpenAIPlugin(config)
+        data = {
+            "game_info": FakeGameInfo(
+                sport="lacrosse",
+                venue="Riverside Field",
+                game_time="19:00",
+                level="Varsity",
+                tournament="State Semifinal",
+                description="Friday rivalry game",
+            ),
+            "home_profile": FakeTeamInfo(team_name="Otters", logo_path=home_logo_path, colors="Blue"),
+            "away_profile": FakeTeamInfo(team_name="Foxes", logo_path=away_logo_path, colors="Gold"),
+            "regenerate_image_only": True,
+        }
+        context = HookContext(hook=Hook.ON_GAME_INIT, data={**data, "game_image_prompt": override})
+        plugin.on_game_init(context)
+
+        kwargs = image_request.call_args.kwargs
+        prompt = kwargs["prompt"]
+        assert kwargs["images"] == []
+        assert prompt.endswith(BACKGROUND_INSTRUCTIONS)
+        assert "A Riverside Field backdrop on 2026-01-15." in prompt
+        assert "{{" not in prompt
+        configured_prompt = "Configured: lacrosse at Riverside Field on 2026-01-15."
+        if not use_configured_template:
+            for detail in ["lacrosse", "Otters vs Foxes", "Varsity", "State Semifinal", "19:00", "Friday rivalry game"]:
+                assert detail in prompt
+            assert "Blue on the left" in prompt
+            assert "Gold on the right" in prompt
+        elif isinstance(override, str) and override.strip():
+            assert prompt.startswith("Draw an abstract lacrosse scene at Riverside Field.")
+            plugin.on_game_init(HookContext(hook=Hook.ON_GAME_INIT, data=data))
+            assert image_request.call_args.kwargs["prompt"].startswith(configured_prompt)
+        else:
+            assert prompt.startswith(configured_prompt)
 
     @patch("reeln_openai_plugin.plugin.generate_game_image")
     @patch("reeln_openai_plugin.plugin.generate_livestream_metadata")
@@ -1325,6 +1449,7 @@ class TestOnGameInitGameImage:
         # Livestream metadata still set, game image not
         assert context.shared["livestream_metadata"]["title"] == "T"
         assert "game_image" not in context.shared
+        assert context.shared["game_image_error"] == "Image gen failed"
         assert "game image generation failed" in caplog.text
 
     @patch("reeln_openai_plugin.plugin.generate_livestream_metadata")
