@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.13.0] - 2026-11-24
+
+### Added
+
+- Apply a sponsor footer to finished PNG, JPEG, or WebP game artwork without making an OpenAI request or modifying the source file.
+
+### Changed
+
+- Restored the broadcast matchup style with split team-color artwork, prominent metallic typography, and angled nameplates. The sponsor footer pairs the supplied logo with “This game is brought to you in part by.”
+
+## [0.12.2] - 2026-11-24
+
+### Fixed
+
+- Game thumbnails use a sport-specific art direction prompt with matchup, venue and event context. The open matchup layout gives the generated artwork more room around the supplied team logos.
+- A game image prompt edited for one run now reaches the image request.
+
+## [0.12.1] - 2026-11-24
+
+### Fixed
+
+- Game thumbnails scale the approved logo proportionally and show a larger, labeled sponsor area. The original PNG is retained.
+
+## [0.12.0] - 2026-11-24
+
+### Added
+
+- Optional game sponsor artwork in the lower-right thumbnail footer. The plugin retains the supplied PNG and places it at native size.
+
+### Fixed
+
+- Game thumbnail generation sends only a background prompt to OpenAI. It places the team's assigned logo files and the matchup details locally to preserve official branding.
+- Game directories with the same name now receive separate thumbnail files when they share a configured image output directory.
+
 ## [0.11.0] - 2026-06-19
 
 ### Changed

@@ -59,10 +59,15 @@ class PromptRegistry:
         self._cache[name] = template
         return template
 
-    def render(self, name: str, variables: dict[str, str] | None = None) -> str:
-        """Load, append context lines, and render the template *name*."""
-        template = self.load(name)
-        text = template.text
+    def render(
+        self,
+        name: str,
+        variables: dict[str, str] | None = None,
+        *,
+        template_text: str | None = None,
+    ) -> str:
+        """Render the template with configured context and optional one-run text."""
+        text = self.load(name).text if template_text is None else template_text
 
         # Append context lines if configured
         context_lines = self._prompt_context.get(name)
@@ -70,10 +75,7 @@ class PromptRegistry:
             text = text + "\n" + "\n".join(context_lines)
 
         # Render variables
-        if variables:
-            for key, value in variables.items():
-                text = text.replace(f"{{{{{key}}}}}", value)
-        return text
+        return PromptTemplate(text).render(variables or {})
 
     def _read(self, name: str) -> str:
         """Read raw template text from override path or bundled resource."""

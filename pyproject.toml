@@ -9,7 +9,7 @@ description = "reeln-cli plugin for OpenAI-powered LLM integration (metadata, tr
 readme = "README.md"
 license = "AGPL-3.0-only"
 requires-python = ">=3.11"
-dependencies = ["Pillow"]
+dependencies = ["Pillow>=10.1"]
 
 [project.urls]
 Homepage = "https://streamn.dad"

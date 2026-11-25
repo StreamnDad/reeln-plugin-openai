@@ -1,23 +1,13 @@
-Create a professional sports broadcast-style game thumbnail image.
+Create the edge-to-edge arena artwork for a dramatic, premium sports broadcast matchup graphic.
 
-Teams: {{home_team}} vs {{away_team}}
-Home Team Colors: {{home_colors}}
-Away Team Colors: {{away_colors}}
-Game Level: {{game_level}}
-Level: {{level}}
+Sport: {{sport}}
+Matchup: {{home_team}} vs {{away_team}}
+Level: {{level}} (team profile level {{game_level}})
 Tournament: {{tournament}}
-Context: {{description}}
-Venue: {{rink}}
-Date: {{game_date}}
-Time: {{game_time}}
+Venue: {{venue}}
+Date and time: {{date}} {{game_time}}
+Game notes: {{description}}
 
-The provided images are the team logos. Use them as reference for the design.
+Make the sport recognizable at a glance. Put a strongly foreshortened playing surface in the foreground. For ice hockey, show deeply scratched, reflective ice and bright arena lights. Layer dark arena stands, sharp directional highlights, drifting suspended particles, and high-contrast atmospheric depth. Adapt the sport, location, and game notes to the scene. The mood is a major broadcast opener with dramatic light and gritty photographic detail.
 
-Requirements:
-- ESPN/NBC Sports broadcast quality design
-- Include both team logos prominently
-- Display team names, venue, date, and game time
-- Use each team's colors in their respective areas
-- Professional lighting, texture, and 3D elements
-- Clean, modern sports broadcast aesthetic
-- Text must be legible and well-positioned
+Build two opposing banks of intense light, richer home colors {{home_colors}} on the left and away colors {{away_colors}} on the right. Blue and red are fallback banks when supplied colors are absent or both neutral. Let bright light rake diagonally through the center gap and throw colored reflections across the playing surface. Add crisp white stadium lights near the top corners, textured atmospheric glow, and bold diagonal motion. Keep the composition full-bleed, with visible scene details within the central 16:9 crop. Darker mid-left and mid-right zones support official logos and beveled matchup plates added locally. Draw only the environment and lighting.
